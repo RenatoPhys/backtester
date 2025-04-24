@@ -6,6 +6,7 @@ import os
 import numpy as np
 import pandas as pd
 from .utils.stop_utils import compute_stop_loss_take_profit
+from .utils.drawdown_utils import calc_dd  # Importa a nova função
 
 
 class Backtester:
@@ -47,6 +48,7 @@ class Backtester:
         self.trading_hours = trading_hours
         self.path_base = path_base
         self.df = None
+        self.dd_metrics = None  # Adiciona atributo para métricas de drawdown
         
 
     def load_data(self):
@@ -122,6 +124,16 @@ class Backtester:
         #self.df['strategy'] = self.valor_lote * self.lote * (self.df['pts_final']) - 2*self.valor_lote * self.lote * self.tc
         self.df['strategy'] = self.valor_lote * self.lote * (self.df['pts_final']) - 2*self.lote * self.tc
         self.df['cstrategy'] = self.df['strategy'].cumsum()
+        
+        # Calcula drawdown e time underwater
+        dd_df = calc_dd(self.df['cstrategy'])
+        
+        # Adiciona as colunas de drawdown ao dataframe principal
+        self.df['cummax'] = dd_df['cummax']
+        self.df['drawdown'] = dd_df['drawdown']
+        self.df['drawdown_pct'] = dd_df['drawdown_pct']
+        self.df['underwater'] = dd_df['underwater']
+        self.df['time_uw'] = dd_df['time_uw']
 
         
     def calculate_metrics(self):
@@ -129,9 +141,15 @@ class Backtester:
         # Resultados básicos
         total_return = self.df['cstrategy'].iloc[-1]
 
-        # Cálculo de drawdown
-        drawdown_series = (self.df['cstrategy'].cummax() - self.df['cstrategy']) / self.df['cstrategy'].cummax().replace(0, np.nan)
-        max_drawdown = drawdown_series.max() if not drawdown_series.empty else 0
+        # Métricas avançadas de drawdown
+        max_drawdown = abs(self.df['drawdown_pct'].min()) if len(self.df) > 0 else 0
+        max_drawdown_value = abs(self.df['drawdown'].min()) if len(self.df) > 0 else 0
+        max_time_underwater = self.df['time_uw'].max() if len(self.df) > 0 else 0
+        
+        # Contagem de períodos em drawdown
+        total_periods = len(self.df)
+        underwater_periods = self.df['underwater'].sum()
+        underwater_rate = underwater_periods / total_periods if total_periods > 0 else 0
 
         # Análise de trades
         # Identifica início de cada trade (quando position muda de valor)
@@ -196,6 +214,9 @@ class Backtester:
             'time_exit_rate': time_exit_rate,  # % de trades que fecharam por tempo
             'profit_factor': profit_factor,
             'max_drawdown': max_drawdown,
+            'max_drawdown_value': max_drawdown_value,  # Valor absoluto do drawdown máximo
+            'max_time_underwater': max_time_underwater,  # Tempo máximo em drawdown
+            'underwater_rate': underwater_rate,  # % do tempo em drawdown
             'sharpe_ratio': sharpe_ratio,
             'sortino_ratio': sortino_ratio,
             'calmar_ratio': calmar_ratio,
@@ -216,6 +237,9 @@ class Backtester:
         print("\n--- RESULTADOS ---")
         print(f"Retorno Total: ${metrics['total_return']:.2f}")
         print(f"Drawdown Máximo: {metrics['max_drawdown']:.2%}")
+        print(f"Drawdown Máximo (Valor): ${metrics['max_drawdown_value']:.2f}")
+        print(f"Tempo Máximo em Drawdown: {metrics['max_time_underwater']} períodos")
+        print(f"Tempo em Drawdown: {metrics['underwater_rate']:.2%} do total")
 
         print("\n--- TRADES ---")
         print(f"Total de Trades: {metrics['total_trades']}")
@@ -259,9 +283,47 @@ class Backtester:
         return self.df, self.calculate_metrics()
     
     
-    def plot_equity_curve(self, figsize=(12, 6)):
+    def plot_equity_curve(self, figsize=(12, 6), include_drawdown=True):
         """
-        Plota a curva de equity da estratégia.
+        Plota a curva de equity da estratégia e opcionalmente o drawdown.
+        
+        Args:
+            figsize (tuple): Dimensões da figura (largura, altura)
+            include_drawdown (bool): Se True, inclui um gráfico de drawdown
+        """
+        import matplotlib.pyplot as plt
+        
+        if include_drawdown:
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(figsize[0], figsize[1]*1.5), gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
+            
+            # Curva de equity
+            ax1.plot(self.df.index, self.df['cstrategy'])
+            ax1.set_title(f'Curva de Equity - {self.symbol} ({self.timeframe})')
+            ax1.set_ylabel('Resultado ($)')
+            ax1.grid(True)
+            
+            # Gráfico de drawdown
+            ax2.fill_between(self.df.index, self.df['drawdown'], 0, color='red', alpha=0.3)
+            ax2.set_title('Drawdown ($)')
+            ax2.set_ylabel('Drawdown ($)')
+            ax2.set_xlabel('Data')
+            ax2.grid(True)
+            
+            plt.tight_layout()
+        else:
+            plt.figure(figsize=figsize)
+            plt.plot(self.df.index, self.df['cstrategy'])
+            plt.title(f'Curva de Equity - {self.symbol} ({self.timeframe})')
+            plt.xlabel('Data')
+            plt.ylabel('Resultado ($)')
+            plt.grid(True)
+            plt.tight_layout()
+            
+        return plt
+
+    def plot_drawdown(self, figsize=(12, 6)):
+        """
+        Plota apenas o drawdown da estratégia.
         
         Args:
             figsize (tuple): Dimensões da figura (largura, altura)
@@ -269,10 +331,13 @@ class Backtester:
         import matplotlib.pyplot as plt
         
         plt.figure(figsize=figsize)
-        plt.plot(self.df.index, self.df['cstrategy'])
-        plt.title(f'Curva de Equity - {self.symbol} ({self.timeframe})')
+        plt.fill_between(self.df.index, self.df['drawdown_pct']*100, 0, color='red', alpha=0.3)
+        plt.plot(self.df.index, self.df['time_uw'], color='blue', alpha=0.6, label='Tempo em Drawdown')
+        plt.title(f'Análise de Drawdown - {self.symbol} ({self.timeframe})')
         plt.xlabel('Data')
-        plt.ylabel('Resultado ($)')
+        plt.ylabel('Drawdown (%) / Tempo')
+        plt.legend()
         plt.grid(True)
         plt.tight_layout()
+            
         return plt
