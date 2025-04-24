@@ -111,7 +111,7 @@ class Backtester:
         
     def calculate_results(self):
         """Calcula os resultados financeiros da estratégia."""
-        self.df['pts_final'] = 0
+        self.df['pts_final'] = 0.0
         self.df.loc[self.df['status_trade'] == 1, 'pts_final'] = self.tp
         self.df.loc[self.df['status_trade'] == -1, 'pts_final'] = -self.sl
 
@@ -122,7 +122,8 @@ class Backtester:
         self.df.loc[filtro_sell, 'pts_final'] = self.df.loc[filtro_sell, 'close'] - self.df.loc[filtro_sell, 'close_final']
 
         #self.df['strategy'] = self.valor_lote * self.lote * (self.df['pts_final']) - 2*self.valor_lote * self.lote * self.tc
-        self.df['strategy'] = self.valor_lote * self.lote * (self.df['pts_final']) - 2*self.lote * self.tc
+        self.df['strategy'] = 0.0
+        self.df.loc[self.df['position']!=0,'strategy'] = self.valor_lote * self.lote * (self.df[self.df['position']!=0]['pts_final']) - 2*self.lote * self.tc
         self.df['cstrategy'] = self.df['strategy'].cumsum()
         
         # Calcula drawdown e time underwater
