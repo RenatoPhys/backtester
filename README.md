@@ -36,13 +36,11 @@ bt = Backtester(
     path_base="./data/"
 )
 
-# Definir estratégia
-strategy = SimpleMovingAverageCrossover(fast_period=5, slow_period=20)
+# Exemplo 1: Backtest com estratégia de cruzamento de médias móveis
+print("Executando backtest com estratégia SMA Crossover...")
+results, metrics = bt.run(signal_function=sma_crossover, signal_args={"fast_period": 5, "slow_period": 20})
 
-# Executar backtest
-results, metrics = bt.run(signal_function=strategy.generate_signals)
-
-# Imprimir métricas
+# Print de métricas
 bt.print_metrics(metrics)
 ```
 
