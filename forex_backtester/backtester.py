@@ -341,3 +341,218 @@ class Backtester:
         plt.tight_layout()
             
         return plt
+    
+    def plot_by_position(self, figsize=(12, 6)):
+        """
+        Plota a curva de equity separada por posições de compra e venda.
+        
+        Args:
+            figsize (tuple): Dimensões da figura (largura, altura)
+            
+        Returns:
+            matplotlib.pyplot: Objeto pyplot com o gráfico
+        """
+        import matplotlib.pyplot as plt
+        from matplotlib.ticker import FuncFormatter
+        
+        # Calcular resultados separados por posição (compra/venda)
+        df_analysis = self.df.copy()
+        df_analysis['profit_buy'] = 0.0
+        df_analysis['profit_sell'] = 0.0
+        
+        # Atribuir lucros às respectivas posições
+        df_analysis.loc[df_analysis['position'] == 1, 'profit_buy'] = df_analysis.loc[df_analysis['position'] == 1, 'strategy']
+        df_analysis.loc[df_analysis['position'] == -1, 'profit_sell'] = df_analysis.loc[df_analysis['position'] == -1, 'strategy']
+        
+        # Calcular acumulados
+        df_analysis['cstrategy_buy'] = df_analysis['profit_buy'].cumsum()
+        df_analysis['cstrategy_sell'] = df_analysis['profit_sell'].cumsum()
+        
+        # Criar o gráfico
+        plt.figure(figsize=figsize)
+        plt.plot(df_analysis.index, df_analysis['cstrategy'], label='Total', linewidth=2)
+        plt.plot(df_analysis.index, df_analysis['cstrategy_buy'], label='Compras', linewidth=1.5)
+        plt.plot(df_analysis.index, df_analysis['cstrategy_sell'], label='Vendas', linewidth=1.5)
+        
+        # Formatação do gráfico
+        plt.title(f'Retorno Acumulado por Tipo de Posição - {self.symbol} ({self.timeframe})')
+        plt.xlabel('Data')
+        plt.ylabel('Resultado ($)')
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        plt.tight_layout()
+        
+        return plt
+
+    def plot_profit_by_hour(self, figsize=(14, 8)):
+        """
+        Plota o lucro acumulado por hora do dia, separado por posições de compra e venda.
+        
+        Args:
+            figsize (tuple): Dimensões da figura (largura, altura)
+            
+        Returns:
+            matplotlib.pyplot: Objeto pyplot com o gráfico
+        """
+        import matplotlib.pyplot as plt
+        import pandas as pd
+        import numpy as np
+        
+        # Extrair hora do dia
+        df_analysis = self.df.copy()
+        df_analysis['hour'] = df_analysis.index.hour
+        
+        # Preparar DataFrame para análise por hora
+        hourly_results = {'hour': [], 'total': [], 'buy': [], 'sell': []}
+        
+        # Analisar todas as horas do dia (0-23)
+        hours = sorted(df_analysis['hour'].unique())
+        
+        for hour in hours:
+            # Filtrar dados para a hora específica
+            hour_data = df_analysis[df_analysis['hour'] == hour]
+            
+            # Calcular resultados para essa hora
+            total_profit = hour_data['strategy'].sum()
+            buy_profit = hour_data.loc[hour_data['position'] == 1, 'strategy'].sum()
+            sell_profit = hour_data.loc[hour_data['position'] == -1, 'strategy'].sum()
+            
+            # Adicionar resultados ao dicionário
+            hourly_results['hour'].append(hour)
+            hourly_results['total'].append(total_profit)
+            hourly_results['buy'].append(buy_profit)
+            hourly_results['sell'].append(sell_profit)
+        
+        # Criar DataFrame de resultados por hora
+        hourly_df = pd.DataFrame(hourly_results)
+        
+        # Criar gráfico de barras
+        plt.figure(figsize=figsize)
+        
+        bar_width = 0.25
+        x = np.arange(len(hours))
+        
+        plt.bar(x - bar_width, hourly_df['total'], width=bar_width, label='Total', color='blue', alpha=0.7)
+        plt.bar(x, hourly_df['buy'], width=bar_width, label='Compras', color='green', alpha=0.7)
+        plt.bar(x + bar_width, hourly_df['sell'], width=bar_width, label='Vendas', color='red', alpha=0.7)
+        
+        # Formatação do gráfico
+        plt.title(f'Lucro Total por Hora do Dia - {self.symbol} ({self.timeframe})')
+        plt.xlabel('Hora do Dia')
+        plt.ylabel('Resultado ($)')
+        plt.xticks(x, hourly_df['hour'])
+        plt.grid(True, axis='y', alpha=0.3)
+        plt.legend()
+        plt.tight_layout()
+        
+        return plt
+
+    def plot_cumulative_by_hour(self, figsize=(14, 10)):
+        """
+        Plota o lucro acumulado ao longo do tempo por hora do dia,
+        mostrando a evolução de cada hora separadamente.
+        
+        Args:
+            figsize (tuple): Dimensões da figura (largura, altura)
+            
+        Returns:
+            matplotlib.pyplot: Objeto pyplot com o gráfico
+        """
+        import matplotlib.pyplot as plt
+        import pandas as pd
+        
+        # Extrair hora do dia e data
+        df_analysis = self.df.copy()
+        df_analysis['hour'] = df_analysis.index.hour
+        df_analysis['date'] = df_analysis.index.date
+        
+        # Criar campos para lucros separados por hora e posição
+        hours = sorted(df_analysis['hour'].unique())
+        
+        # Criar dataframe diário para análise
+        daily_df = pd.DataFrame(index=pd.DatetimeIndex(df_analysis['date'].unique()))
+        
+        # Preencher campos de lucro por hora e por tipo de posição
+        for hour in hours:
+            hour_key = f'profit_hour_{hour}'
+            buy_key = f'profit_hour_buy_{hour}'
+            sell_key = f'profit_hour_sell_{hour}'
+            
+            # Inicializar com zeros
+            df_analysis[hour_key] = 0.0
+            df_analysis[buy_key] = 0.0
+            df_analysis[sell_key] = 0.0
+            
+            # Atribuir lucros à hora correspondente
+            hour_mask = df_analysis['hour'] == hour
+            df_analysis.loc[hour_mask, hour_key] = df_analysis.loc[hour_mask, 'strategy']
+            df_analysis.loc[hour_mask & (df_analysis['position'] == 1), buy_key] = df_analysis.loc[hour_mask & (df_analysis['position'] == 1), 'strategy']
+            df_analysis.loc[hour_mask & (df_analysis['position'] == -1), sell_key] = df_analysis.loc[hour_mask & (df_analysis['position'] == -1), 'strategy']
+        
+        # Agrupar por data para obter resultados diários
+        for hour in hours:
+            hour_key = f'profit_hour_{hour}'
+            buy_key = f'profit_hour_buy_{hour}'
+            sell_key = f'profit_hour_sell_{hour}'
+            
+            # Agrupar por data e somar
+            hour_grouped = df_analysis.groupby('date')[hour_key].sum()
+            buy_grouped = df_analysis.groupby('date')[buy_key].sum()
+            sell_grouped = df_analysis.groupby('date')[sell_key].sum()
+            
+            # Adicionar ao dataframe diário
+            daily_df[hour_key] = hour_grouped
+            daily_df[buy_key] = buy_grouped
+            daily_df[sell_key] = sell_grouped
+        
+        # Calcular valores acumulados
+        for hour in hours:
+            hour_key = f'profit_hour_{hour}'
+            buy_key = f'profit_hour_buy_{hour}'
+            sell_key = f'profit_hour_sell_{hour}'
+            
+            cum_hour_key = f'cum_hour_{hour}'
+            cum_buy_key = f'cum_hour_buy_{hour}'
+            cum_sell_key = f'cum_hour_sell_{hour}'
+            
+            daily_df[cum_hour_key] = daily_df[hour_key].cumsum().fillna(0)
+            daily_df[cum_buy_key] = daily_df[buy_key].cumsum().fillna(0)
+            daily_df[cum_sell_key] = daily_df[sell_key].cumsum().fillna(0)
+        
+        # Criar gráficos
+        fig, axs = plt.subplots(3, 1, figsize=figsize, sharex=True)
+        
+        # Gráfico 1: Lucro acumulado por hora (total)
+        for hour in hours:
+            cum_hour_key = f'cum_hour_{hour}'
+            axs[0].plot(daily_df.index, daily_df[cum_hour_key], label=f'Hora {hour}')
+        
+        axs[0].set_title(f'Lucro Acumulado por Hora do Dia - {self.symbol} ({self.timeframe})')
+        axs[0].set_ylabel('Resultado ($)')
+        axs[0].grid(True, alpha=0.3)
+        axs[0].legend(loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0)
+        
+        # Gráfico 2: Lucro acumulado por hora (compras)
+        for hour in hours:
+            cum_buy_key = f'cum_hour_buy_{hour}'
+            axs[1].plot(daily_df.index, daily_df[cum_buy_key], label=f'Compras Hora {hour}')
+        
+        axs[1].set_title('Lucro Acumulado por Hora - Apenas Compras')
+        axs[1].set_ylabel('Resultado ($)')
+        axs[1].grid(True, alpha=0.3)
+        axs[1].legend(loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0)
+        
+        # Gráfico 3: Lucro acumulado por hora (vendas)
+        for hour in hours:
+            cum_sell_key = f'cum_hour_sell_{hour}'
+            axs[2].plot(daily_df.index, daily_df[cum_sell_key], label=f'Vendas Hora {hour}')
+        
+        axs[2].set_title('Lucro Acumulado por Hora - Apenas Vendas')
+        axs[2].set_xlabel('Data')
+        axs[2].set_ylabel('Resultado ($)')
+        axs[2].grid(True, alpha=0.3)
+        axs[2].legend(loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0)
+        
+        plt.tight_layout()
+        
+        return plt
