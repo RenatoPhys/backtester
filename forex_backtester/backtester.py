@@ -119,7 +119,8 @@ class Backtester:
         filtro_sell = (self.df['status_trade'] == 0) & (self.df['position'] == -1)
         self.df.loc[filtro_sell, 'pts_final'] = self.df.loc[filtro_sell, 'close'] - self.df.loc[filtro_sell, 'close_final']
 
-        self.df['strategy'] = self.valor_lote * self.lote * (self.df['pts_final']) - 2*self.valor_lote * self.lote * self.tc
+        #self.df['strategy'] = self.valor_lote * self.lote * (self.df['pts_final']) - 2*self.valor_lote * self.lote * self.tc
+        self.df['strategy'] = self.valor_lote * self.lote * (self.df['pts_final']) - 2*self.lote * self.tc
         self.df['cstrategy'] = self.df['strategy'].cumsum()
 
         
