@@ -277,13 +277,17 @@ class Backtester:
             tuple: (DataFrame com resultados, dicionário de métricas)
         """
         
+        # Armazenar informações da estratégia
+        self.signal_function_name = signal_function.__name__ if signal_function else "default"
+        self.signal_args = signal_args or {}
+        
         self.load_data()
         self.define_positions(signal_function, signal_args)
         self.add_indices()
         self.calculate_stops()
         self.calculate_results()
         return self.df, self.calculate_metrics()
-    
+        
     
     def plot_equity_curve(self, figsize=(12, 6), include_drawdown=True):
         """
@@ -295,12 +299,36 @@ class Backtester:
         """
         import matplotlib.pyplot as plt
         
+        # Criar string com os parâmetros da estratégia
+        strategy_params = f"Estratégia: {getattr(self, 'signal_function_name', 'N/A')}"
+        
+        # Adicionar parâmetros da estratégia arredondados
+        if hasattr(self, 'signal_args') and self.signal_args:
+            rounded_params = {}
+            for k, v in self.signal_args.items():
+                # Arredondar valores numéricos para 2 casas decimais
+                if isinstance(v, (int, float)):
+                    rounded_params[k] = round(v, 2)
+                else:
+                    rounded_params[k] = v
+            
+            params_str = ', '.join([f"{k}={v}" for k, v in rounded_params.items()])
+            strategy_params += f" ({params_str})"
+        
+        # Adicionar SL e TP ao título
+        sl_tp_info = f"SL: {round(self.sl, 2)}, TP: {round(self.tp, 2)}"
+        
+        # Configurações básicas de título
+        base_title = f'Curva de Equity - {self.symbol} ({self.timeframe})'
+        full_title = f'{base_title}\n{strategy_params}\n{sl_tp_info}'
+        
         if include_drawdown:
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(figsize[0], figsize[1]*1.5), gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(figsize[0], figsize[1]*1.5), 
+                                            gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
             
             # Curva de equity
             ax1.plot(self.df.index, self.df['cstrategy'])
-            ax1.set_title(f'Curva de Equity - {self.symbol} ({self.timeframe})')
+            ax1.set_title(full_title)
             ax1.set_ylabel('Resultado ($)')
             ax1.grid(True)
             
@@ -315,7 +343,7 @@ class Backtester:
         else:
             plt.figure(figsize=figsize)
             plt.plot(self.df.index, self.df['cstrategy'])
-            plt.title(f'Curva de Equity - {self.symbol} ({self.timeframe})')
+            plt.title(full_title)
             plt.xlabel('Data')
             plt.ylabel('Resultado ($)')
             plt.grid(True)
