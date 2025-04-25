@@ -185,7 +185,8 @@ class Backtester:
             # Diversos ratios
             sharpe_ratio = annual_return / annual_volatility if annual_volatility != 0 else 0
             sortino_ratio = annual_return / daily_returns[daily_returns < 0].std() * np.sqrt(252) if len(daily_returns[daily_returns < 0]) > 0 else 0
-            calmar_ratio = annual_return / max_drawdown if max_drawdown != 0 else 0
+            #calmar_ratio = annual_return / max_drawdown if max_drawdown != 0 else 0
+            calmar_ratio = total_return / max_drawdown_value if max_drawdown_value != 0 else 0
 
             # Média de ganhos e perdas
             avg_win = gross_profits / win_trades if win_trades > 0 else 0
@@ -237,7 +238,7 @@ class Backtester:
         print(f"Período: {self.data_ini} a {self.data_fim}")
         print("\n--- RESULTADOS ---")
         print(f"Retorno Total: ${metrics['total_return']:.2f}")
-        print(f"Drawdown Máximo: {metrics['max_drawdown']:.2%}")
+        #print(f"Drawdown Máximo: {metrics['max_drawdown']:.2%}")
         print(f"Drawdown Máximo (Valor): ${metrics['max_drawdown_value']:.2f}")
         print(f"Tempo Máximo em Drawdown: {metrics['max_time_underwater']} períodos")
         print(f"Tempo em Drawdown: {metrics['underwater_rate']:.2%} do total")
