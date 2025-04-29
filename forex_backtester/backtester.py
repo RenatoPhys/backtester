@@ -200,8 +200,20 @@ class Backtester:
             # Calcular retorno anualizado a partir do retorno total
             trading_days = len(daily_returns[daily_returns != 0])
             years = trading_days / 252  # Assumindo 252 dias de trading por ano
-            annual_return = ((1 + total_return_pct/100) ** (1/years) - 1) * 100 if years > 0 else 0
             
+            # Retorno anual
+            if years > 0:
+                base = (1 + total_return_pct/100)
+                if base > 0:
+                    # Normal case - positive return
+                    annual_return = (base ** (1/years) - 1) * 100
+                else:
+                    # Negative return case
+                    # We use the formula: sign(base) * abs(base)^(1/years)
+                    annual_return = -1 * (abs(base) ** (1/years) - 1) * 100
+            else:
+                annual_return = 0
+                        
             # Volatilidade anualizada baseada nos retornos percentuais
             annual_volatility = daily_returns.std() * np.sqrt(252)
 
@@ -523,99 +535,157 @@ class Backtester:
         """
         import matplotlib.pyplot as plt
         import pandas as pd
+        import matplotlib.cm as cm
         
-        # Extrair hora do dia e data
+        ## Extrair hora do dia e data
+        #df_analysis = self.df.copy()
+        #df_analysis['hour'] = df_analysis.index.hour
+        #df_analysis['date'] = df_analysis.index.date
+        #
+        ## Criar campos para lucros separados por hora e posição
+        #hours = sorted(df_analysis['hour'].unique())
+        #
+        ## Criar dataframe diário para análise
+        #daily_df = pd.DataFrame(index=pd.DatetimeIndex(df_analysis['date'].unique()))
+        #
+        ## Preencher campos de lucro por hora e por tipo de posição
+        #for hour in hours:
+        #    hour_key = f'profit_hour_{hour}'
+        #    buy_key = f'profit_hour_buy_{hour}'
+        #    sell_key = f'profit_hour_sell_{hour}'
+        #    
+        #    # Inicializar com zeros
+        #    df_analysis[hour_key] = 0.0
+        #    df_analysis[buy_key] = 0.0
+        #    df_analysis[sell_key] = 0.0
+        #    
+        #    # Atribuir lucros à hora correspondente
+        #    hour_mask = df_analysis['hour'] == hour
+        #    df_analysis.loc[hour_mask, hour_key] = df_analysis.loc[hour_mask, 'strategy']
+        #    df_analysis.loc[hour_mask & (df_analysis['position'] == 1), buy_key] = df_analysis.loc[hour_mask & (df_analysis['position'] == 1), 'strategy']
+        #    df_analysis.loc[hour_mask & (df_analysis['position'] == -1), sell_key] = df_analysis.loc[hour_mask & (df_analysis['position'] == -1), 'strategy']
+        #
+        ## Agrupar por data para obter resultados diários
+        #for hour in hours:
+        #    hour_key = f'profit_hour_{hour}'
+        #    buy_key = f'profit_hour_buy_{hour}'
+        #    sell_key = f'profit_hour_sell_{hour}'
+        #    
+        #    # Agrupar por data e somar
+        #    hour_grouped = df_analysis.groupby('date')[hour_key].sum()
+        #    buy_grouped = df_analysis.groupby('date')[buy_key].sum()
+        #    sell_grouped = df_analysis.groupby('date')[sell_key].sum()
+        #    
+        #    # Adicionar ao dataframe diário
+        #    daily_df[hour_key] = hour_grouped
+        #    daily_df[buy_key] = buy_grouped
+        #    daily_df[sell_key] = sell_grouped
+        #
+        ## Calcular valores acumulados
+        #for hour in hours:
+        #    hour_key = f'profit_hour_{hour}'
+        #    buy_key = f'profit_hour_buy_{hour}'
+        #    sell_key = f'profit_hour_sell_{hour}'
+        #    
+        #    cum_hour_key = f'cum_hour_{hour}'
+        #    cum_buy_key = f'cum_hour_buy_{hour}'
+        #    cum_sell_key = f'cum_hour_sell_{hour}'
+        #    
+        #    daily_df[cum_hour_key] = daily_df[hour_key].cumsum().fillna(0)
+        #    daily_df[cum_buy_key] = daily_df[buy_key].cumsum().fillna(0)
+        #    daily_df[cum_sell_key] = daily_df[sell_key].cumsum().fillna(0)
+
+        # Cópia do DataFrame original
         df_analysis = self.df.copy()
         df_analysis['hour'] = df_analysis.index.hour
         df_analysis['date'] = df_analysis.index.date
-        
-        # Criar campos para lucros separados por hora e posição
+
         hours = sorted(df_analysis['hour'].unique())
-        
-        # Criar dataframe diário para análise
-        daily_df = pd.DataFrame(index=pd.DatetimeIndex(df_analysis['date'].unique()))
-        
-        # Preencher campos de lucro por hora e por tipo de posição
+        daily_index = pd.DatetimeIndex(df_analysis['date'].unique())
+        daily_df = pd.DataFrame(index=daily_index)
+
+        # Criar colunas de lucro por hora e tipo de posição
         for hour in hours:
             hour_key = f'profit_hour_{hour}'
             buy_key = f'profit_hour_buy_{hour}'
             sell_key = f'profit_hour_sell_{hour}'
-            
-            # Inicializar com zeros
+
+            hour_mask = df_analysis['hour'] == hour
+            buy_mask = hour_mask & (df_analysis['position'] == 1)
+            sell_mask = hour_mask & (df_analysis['position'] == -1)
+
             df_analysis[hour_key] = 0.0
             df_analysis[buy_key] = 0.0
             df_analysis[sell_key] = 0.0
-            
-            # Atribuir lucros à hora correspondente
-            hour_mask = df_analysis['hour'] == hour
+
             df_analysis.loc[hour_mask, hour_key] = df_analysis.loc[hour_mask, 'strategy']
-            df_analysis.loc[hour_mask & (df_analysis['position'] == 1), buy_key] = df_analysis.loc[hour_mask & (df_analysis['position'] == 1), 'strategy']
-            df_analysis.loc[hour_mask & (df_analysis['position'] == -1), sell_key] = df_analysis.loc[hour_mask & (df_analysis['position'] == -1), 'strategy']
-        
-        # Agrupar por data para obter resultados diários
+            df_analysis.loc[buy_mask, buy_key] = df_analysis.loc[buy_mask, 'strategy']
+            df_analysis.loc[sell_mask, sell_key] = df_analysis.loc[sell_mask, 'strategy']
+
+        # Gerar colunas de lucro diário agregadas
+        daily_columns = []
+
         for hour in hours:
             hour_key = f'profit_hour_{hour}'
             buy_key = f'profit_hour_buy_{hour}'
             sell_key = f'profit_hour_sell_{hour}'
-            
-            # Agrupar por data e somar
-            hour_grouped = df_analysis.groupby('date')[hour_key].sum()
-            buy_grouped = df_analysis.groupby('date')[buy_key].sum()
-            sell_grouped = df_analysis.groupby('date')[sell_key].sum()
-            
-            # Adicionar ao dataframe diário
-            daily_df[hour_key] = hour_grouped
-            daily_df[buy_key] = buy_grouped
-            daily_df[sell_key] = sell_grouped
-        
-        # Calcular valores acumulados
+
+            grouped = df_analysis.groupby('date')[[hour_key, buy_key, sell_key]].sum()
+            grouped.index = pd.to_datetime(grouped.index)
+            daily_columns.append(grouped)
+
+        daily_df = pd.concat([daily_df] + daily_columns, axis=1)
+
+        # Calcular acumulados de forma vetorizada
+        cum_columns = {}
+
         for hour in hours:
             hour_key = f'profit_hour_{hour}'
             buy_key = f'profit_hour_buy_{hour}'
             sell_key = f'profit_hour_sell_{hour}'
-            
-            cum_hour_key = f'cum_hour_{hour}'
-            cum_buy_key = f'cum_hour_buy_{hour}'
-            cum_sell_key = f'cum_hour_sell_{hour}'
-            
-            daily_df[cum_hour_key] = daily_df[hour_key].cumsum().fillna(0)
-            daily_df[cum_buy_key] = daily_df[buy_key].cumsum().fillna(0)
-            daily_df[cum_sell_key] = daily_df[sell_key].cumsum().fillna(0)
+
+            cum_columns[f'cum_hour_{hour}'] = daily_df[hour_key].cumsum().fillna(0)
+            cum_columns[f'cum_hour_buy_{hour}'] = daily_df[buy_key].cumsum().fillna(0)
+            cum_columns[f'cum_hour_sell_{hour}'] = daily_df[sell_key].cumsum().fillna(0)
+
+        daily_df = pd.concat([daily_df, pd.DataFrame(cum_columns, index=daily_df.index)], axis=1)
         
         # Criar gráficos
+        # Criar paleta de cores para todas as horas
+        hours = sorted([int(col.split('_')[-1]) for col in daily_df.columns if col.startswith('cum_hour_') and not 'buy' in col and not 'sell' in col])
+        colors = cm.get_cmap('tab20', len(hours))
+        
         fig, axs = plt.subplots(3, 1, figsize=figsize, sharex=True)
-        
-        # Gráfico 1: Lucro acumulado por hora (total)
-        for hour in hours:
+
+        # --- Gráfico 1: Total ---
+        for i, hour in enumerate(hours):
             cum_hour_key = f'cum_hour_{hour}'
-            axs[0].plot(daily_df.index, daily_df[cum_hour_key], label=f'Hora {hour}')
-        
+            axs[0].plot(daily_df.index, daily_df[cum_hour_key], label=f'{hour:02d}h', color=colors(i))
         axs[0].set_title(f'Lucro Acumulado por Hora do Dia - {self.symbol} ({self.timeframe})')
         axs[0].set_ylabel('Resultado ($)')
         axs[0].grid(True, alpha=0.3)
-        axs[0].legend(loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0)
-        
-        # Gráfico 2: Lucro acumulado por hora (compras)
-        for hour in hours:
+        axs[0].legend(loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0, ncol=2)
+
+        # --- Gráfico 2: Compras ---
+        for i, hour in enumerate(hours):
             cum_buy_key = f'cum_hour_buy_{hour}'
-            axs[1].plot(daily_df.index, daily_df[cum_buy_key], label=f'Compras Hora {hour}')
-        
+            axs[1].plot(daily_df.index, daily_df[cum_buy_key], label=f'{hour:02d}h', color=colors(i))
         axs[1].set_title('Lucro Acumulado por Hora - Apenas Compras')
         axs[1].set_ylabel('Resultado ($)')
         axs[1].grid(True, alpha=0.3)
-        axs[1].legend(loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0)
-        
-        # Gráfico 3: Lucro acumulado por hora (vendas)
-        for hour in hours:
+        axs[1].legend(loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0, ncol=2)
+
+        # --- Gráfico 3: Vendas ---
+        for i, hour in enumerate(hours):
             cum_sell_key = f'cum_hour_sell_{hour}'
-            axs[2].plot(daily_df.index, daily_df[cum_sell_key], label=f'Vendas Hora {hour}')
-        
+            axs[2].plot(daily_df.index, daily_df[cum_sell_key], label=f'{hour:02d}h', color=colors(i))
         axs[2].set_title('Lucro Acumulado por Hora - Apenas Vendas')
         axs[2].set_xlabel('Data')
         axs[2].set_ylabel('Resultado ($)')
         axs[2].grid(True, alpha=0.3)
-        axs[2].legend(loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0)
-        
-        plt.tight_layout()
+        axs[2].legend(loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0, ncol=2)
+
+        fig.suptitle('Análise de Lucro Acumulado por Hora', fontsize=16)
+        plt.tight_layout(rect=[0, 0, 1, 0.97])
         
         return plt
