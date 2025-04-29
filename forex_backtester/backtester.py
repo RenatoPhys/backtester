@@ -23,16 +23,20 @@ class Backtester:
         tc (float): Custo de transação por trade.
         lote (float): Tamanho do lote.
         path_base (str): Caminho para os arquivos de dados históricos.
+        initial_cash (float, optional): Saldo inicial em unidades monetárias. Padrão 10000.0.
         valor_lote (float, optional): Valor do lote em unidades da moeda base. Padrão 10^5.
         trading_hours (int, optional): Horas de trading por dia. Padrão 23.
     """
     
-    def __init__(self, symbol, timeframe, data_ini, data_fim, tp, sl, slippage, tc, lote, path_base, valor_lote=10**5, trading_hours=23):
+    def __init__(self, symbol, timeframe, data_ini, data_fim, tp, sl, slippage, tc, lote, path_base, 
+                 initial_cash=10000.0, valor_lote=10**5, trading_hours=23):
         """Inicializa o backtester com parâmetros configuráveis."""
         if not os.path.exists(path_base):
             raise ValueError(f"Diretório {path_base} não existe.")
         if not isinstance(tp, (int, float)) or tp <= 0:
             raise ValueError("Take-profit deve ser um número positivo.")
+        if not isinstance(initial_cash, (int, float)) or initial_cash <= 0:
+            raise ValueError("Saldo inicial deve ser um número positivo.")
         # Outras validações...
         
         self.symbol = symbol
@@ -44,6 +48,7 @@ class Backtester:
         self.slippage = slippage
         self.tc = tc
         self.lote = lote
+        self.initial_cash = initial_cash
         self.valor_lote = valor_lote
         self.trading_hours = trading_hours
         self.path_base = path_base
@@ -125,6 +130,12 @@ class Backtester:
         self.df['strategy'] = 0.0
         self.df.loc[self.df['position']!=0,'strategy'] = self.valor_lote * self.lote * (self.df[self.df['position']!=0]['pts_final']) - 2*self.lote * self.tc
         self.df['cstrategy'] = self.df['strategy'].cumsum()
+
+        # Adicionar coluna de equidade (equity) considerando saldo inicial
+        self.df['equity'] = self.initial_cash + self.df['cstrategy']
+        
+        # Calcula retornos diários em percentual sobre o capital
+        self.df['daily_returns_pct'] = self.df['strategy'] / self.df['equity'].shift(1).fillna(self.initial_cash)
         
         # Calcula drawdown e time underwater
         dd_df = calc_dd(self.df['cstrategy'])
@@ -138,9 +149,14 @@ class Backtester:
 
         
     def calculate_metrics(self):
+
         """Calcula métricas detalhadas de desempenho da estratégia."""
+        
         # Resultados básicos
-        total_return = self.df['cstrategy'].iloc[-1]
+        initial_equity = self.initial_cash
+        final_equity = self.df['equity'].iloc[-1]
+        total_return = final_equity - initial_equity
+        total_return_pct = (final_equity / initial_equity - 1) * 100
 
         # Métricas avançadas de drawdown
         max_drawdown = abs(self.df['drawdown_pct'].min()) if len(self.df) > 0 else 0
@@ -178,15 +194,21 @@ class Backtester:
             profit_factor = gross_profits / gross_losses if gross_losses != 0 else float('inf')
 
             # Métricas de risco
-            daily_returns = self.df['strategy'].resample('D').sum()
-            annual_return = daily_returns.mean() * 252
+            # Usar retornos percentuais diários para cálculos mais precisos
+            daily_returns = self.df['daily_returns_pct'].resample('D').sum()
+            
+            # Calcular retorno anualizado a partir do retorno total
+            trading_days = len(daily_returns[daily_returns != 0])
+            years = trading_days / 252  # Assumindo 252 dias de trading por ano
+            annual_return = ((1 + total_return_pct/100) ** (1/years) - 1) * 100 if years > 0 else 0
+            
+            # Volatilidade anualizada baseada nos retornos percentuais
             annual_volatility = daily_returns.std() * np.sqrt(252)
 
             # Diversos ratios
-            sharpe_ratio = annual_return / annual_volatility if annual_volatility != 0 else 0
-            sortino_ratio = annual_return / daily_returns[daily_returns < 0].std() * np.sqrt(252) if len(daily_returns[daily_returns < 0]) > 0 else 0
-            #calmar_ratio = annual_return / max_drawdown if max_drawdown != 0 else 0
-            calmar_ratio = total_return / max_drawdown_value if max_drawdown_value != 0 else 0
+            sharpe_ratio = annual_return / (annual_volatility * 100) if annual_volatility != 0 else 0
+            sortino_ratio = annual_return / (daily_returns[daily_returns < 0].std() * np.sqrt(252) * 100) if len(daily_returns[daily_returns < 0]) > 0 else 0
+            calmar_ratio = annual_return / (max_drawdown * 100) if max_drawdown != 0 else 0
 
             # Média de ganhos e perdas
             avg_win = gross_profits / win_trades if win_trades > 0 else 0
@@ -201,12 +223,19 @@ class Backtester:
             win_rate = 0
             tp_rate = sl_rate = time_exit_rate = 0
             profit_factor = 0
+            annual_return = 0
+            annual_volatility = 0
             sharpe_ratio = sortino_ratio = calmar_ratio = 0
             avg_win = avg_loss = win_loss_ratio = expectancy = 0
             win_trades = loss_trades = 0
     
         return {
+            'initial_cash': initial_equity,
+            'final_equity': final_equity,
             'total_return': total_return,
+            'total_return_pct': total_return_pct,
+            'annual_return': annual_return,
+            'annual_volatility': annual_volatility * 100,  # Converter para percentual
             'total_trades': total_trades,
             'win_trades': win_trades,
             'loss_trades': loss_trades,
@@ -237,8 +266,12 @@ class Backtester:
         print(f"Símbolo: {self.symbol} | Timeframe: {self.timeframe}")
         print(f"Período: {self.data_ini} a {self.data_fim}")
         print("\n--- RESULTADOS ---")
-        print(f"Retorno Total: ${metrics['total_return']:.2f}")
-        #print(f"Drawdown Máximo: {metrics['max_drawdown']:.2%}")
+        print(f"Saldo Inicial: ${metrics['initial_cash']:.2f}")
+        print(f"Saldo Final: ${metrics['final_equity']:.2f}")
+        print(f"Retorno Total: ${metrics['total_return']:.2f} ({metrics['total_return_pct']:.2f}%)")
+        print(f"Retorno Anualizado: {metrics['annual_return']:.2f}%")
+        print(f"Volatilidade Anualizada: {metrics['annual_volatility']:.2f}%")
+        print(f"Drawdown Máximo: {metrics['max_drawdown']:.2%}")
         print(f"Drawdown Máximo (Valor): ${metrics['max_drawdown_value']:.2f}")
         print(f"Tempo Máximo em Drawdown: {metrics['max_time_underwater']} períodos")
         print(f"Tempo em Drawdown: {metrics['underwater_rate']:.2%} do total")
@@ -327,7 +360,7 @@ class Backtester:
                                             gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
             
             # Curva de equity
-            ax1.plot(self.df.index, self.df['cstrategy'])
+            ax1.plot(self.df.index, self.df['equity'])
             ax1.set_title(full_title)
             ax1.set_ylabel('Resultado ($)')
             ax1.grid(True)
@@ -342,7 +375,7 @@ class Backtester:
             plt.tight_layout()
         else:
             plt.figure(figsize=figsize)
-            plt.plot(self.df.index, self.df['cstrategy'])
+            plt.plot(self.df.index, self.df['equity'])
             plt.title(full_title)
             plt.xlabel('Data')
             plt.ylabel('Resultado ($)')
