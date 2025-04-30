@@ -25,11 +25,11 @@ class Backtester:
         path_base (str): Caminho para os arquivos de dados históricos.
         initial_cash (float, optional): Saldo inicial em unidades monetárias. Padrão 10000.0.
         valor_lote (float, optional): Valor do lote em unidades da moeda base. Padrão 10^5.
-        trading_hours (int, optional): Horas de trading por dia. Padrão 23.
+        daytrade (bool, optional): Flag para saber se fechamos a posição no fim do pregao diário.
     """
     
     def __init__(self, symbol, timeframe, data_ini, data_fim, tp, sl, slippage, tc, lote, path_base, 
-                 initial_cash=10000.0, valor_lote=10**5, trading_hours=23):
+                 initial_cash=10000.0, valor_lote=10**5, daytrade=True):
         """Inicializa o backtester com parâmetros configuráveis."""
         if not os.path.exists(path_base):
             raise ValueError(f"Diretório {path_base} não existe.")
@@ -50,7 +50,7 @@ class Backtester:
         self.lote = lote
         self.initial_cash = initial_cash
         self.valor_lote = valor_lote
-        self.trading_hours = trading_hours
+        self.daytrade = daytrade
         self.path_base = path_base
         self.df = None
         self.dd_metrics = None  # Adiciona atributo para métricas de drawdown
@@ -80,7 +80,6 @@ class Backtester:
             signal_args (dict, optional): Argumentos adicionais para passar para a função de sinal.
         """
         
-        self.df['tempo_final'] = pd.to_datetime(self.df['safra']) + pd.to_timedelta(self.trading_hours, unit='h')
         self.df['pct_change'] = self.df['close'].pct_change().fillna(0)
         
         if signal_function:
@@ -93,9 +92,15 @@ class Backtester:
             
     def add_indices(self):
         """Adiciona índices e valores finais por safra."""
-        self.df['idx'] = np.arange(self.df.shape[0])
-        self.df['close_final'] = self.df.groupby('safra')['close'].transform('last')
-        self.df['idx_final'] = self.df.groupby('safra')['idx'].transform('last')
+        self.df['idx'] = np.arange(self.df.shape[0])        
+
+        # Se for daytrading, paramos no fim do dia
+        if self.daytrade:  
+            self.df['close_final'] = self.df.groupby('safra')['close'].transform('last')
+            self.df['idx_final'] = self.df.groupby('safra')['idx'].transform('last')
+        else:
+            self.df['close_final'] = self.df['close'].iloc[-1]
+            self.df['idx_final'] = self.df['idx'].iloc[-1]
 
         
     def calculate_stops(self):
