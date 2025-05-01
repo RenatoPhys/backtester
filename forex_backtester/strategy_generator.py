@@ -20,10 +20,9 @@ import json
 from functools import partial
 from concurrent.futures import ProcessPoolExecutor
 from .backtester import Backtester
-from .strategies.indicators import bollinger_bands
 
 
-class ForexStrategyOptimizer:
+class StrategyOptimizer:
     """
     Classe principal para otimização de estratégias FOREX.
     
@@ -31,23 +30,11 @@ class ForexStrategyOptimizer:
     de estratégias de trading, com foco na otimização por horário do dia.
     """
     
-    # Configurações default para símbolos suportados
-    SYMBOL_CONFIG = {
-        'USDJPY': {
-            'tc': 0.5,             # Custo de transação por lote
-            'valor_lote': 1000,    # Valor do lote em unidades da moeda base
-        },
-        'EURUSD': {
-            'tc': 0.5,
-            'valor_lote': 100000,
-        }
-    }
-    
     def __init__(self, 
-                 symbol='USDJPY', 
-                 timeframe='t5', 
-                 data_ini='2020-01-01', 
-                 data_fim='2023-12-31', 
+                 symbol, 
+                 timeframe, 
+                 data_ini, 
+                 data_fim, 
                  initial_cash=30000, 
                  lote=0.01, 
                  slippage=0, 
@@ -56,7 +43,8 @@ class ForexStrategyOptimizer:
                  num_trials=50, 
                  max_workers=4, 
                  export_dir='./resultados',
-                 strategy_function=bollinger_bands):
+                 tc=0.5,
+                 valor_lote=100000):
         """
         Inicializa o otimizador de estratégias.
         
@@ -69,11 +57,12 @@ class ForexStrategyOptimizer:
             lote (float): Tamanho do lote para operações
             slippage (float): Slippage em pontos
             daytrade (bool): Se True, fecha posições no final do dia
-            path_base (str): Caminho base para os dados
+            path_base (str): Caminho para os arquivos de dados históricos
             num_trials (int): Número de tentativas por otimização
             max_workers (int): Número de processos paralelos
             export_dir (str): Diretório para exportação de resultados
-            strategy_function (callable): Função de estratégia a ser otimizada
+            tc (float): Custo de transação por lote
+            valor_lote (float): Valor do lote em unidades da moeda base
         """
         # Armazenar configurações
         self.symbol = symbol
@@ -88,19 +77,17 @@ class ForexStrategyOptimizer:
         self.num_trials = num_trials
         self.max_workers = max_workers
         self.export_dir = export_dir
-        self.strategy_function = strategy_function
-        
-        # Validar símbolo
-        if symbol not in self.SYMBOL_CONFIG:
-            raise ValueError(f"Símbolo {symbol} não encontrado nas configurações!")
-        
-        self.symbol_config = self.SYMBOL_CONFIG[symbol]
+        self.tc = tc
+        self.valor_lote = valor_lote
         
         # Estado interno
         self.run_dir = None
         self.all_results = []
         self.validation_results = []
         self.combined_strategy = None
+        self.param_ranges = {}
+        self.strategy_function = None
+        self.fixed_params = {}
         
     def setup_dirs(self):
         """
@@ -140,14 +127,42 @@ class ForexStrategyOptimizer:
             'num_trials': self.num_trials,
             'max_workers': self.max_workers,
             'export_dir': self.export_dir,
-            'strategy': self.strategy_function.__name__,
-            'tc': self.symbol_config['tc'],
-            'valor_lote': self.symbol_config['valor_lote']
+            'tc': self.tc,
+            'valor_lote': self.valor_lote,
+            'param_ranges': self.param_ranges,
+            'fixed_params': self.fixed_params,
+            'strategy': self.strategy_function.__name__ if self.strategy_function else None
         }
         
         with open(os.path.join(self.run_dir, "config.json"), 'w') as f:
             json.dump(config, f, indent=4)
             
+    def set_param_ranges(self, param_ranges):
+        """
+        Define os ranges de parâmetros a serem otimizados.
+        
+        Args:
+            param_ranges (dict): Dicionário com os ranges de parâmetros.
+                Ex: {'tp': (10, 100), 'sl': (5, 50), 'bb_length': (5, 30), 'std': (1.0, 3.0, 0.1)}
+                Cada range pode ser:
+                    - Tupla (min, max) para int ou float
+                    - Tupla (min, max, step) para float com step
+                    - Lista de valores para categoricos
+        """
+        self.param_ranges = param_ranges
+        return self
+        
+    def set_fixed_params(self, fixed_params):
+        """
+        Define parâmetros fixos (não otimizados).
+        
+        Args:
+            fixed_params (dict): Dicionário com os parâmetros fixos.
+                Ex: {'is_async': True}
+        """
+        self.fixed_params = fixed_params
+        return self
+        
     def _objective_hour(self, trial, hour):
         """
         Função objetivo para otimização com Optuna, específica para um horário.
@@ -159,31 +174,63 @@ class ForexStrategyOptimizer:
         Returns:
             float: Valor da métrica a ser otimizada
         """
-        # Parâmetros a serem otimizados (específico para Bollinger Bands)
-        # Em uma implementação mais genérica, isso seria definido pela estratégia
-        params = {
-            'sl': trial.suggest_int('sl', 5, 50),
-            'tp': trial.suggest_int('tp', 5, 100),
-            'bb_length': trial.suggest_int('bb_length', 5, 30),
-            'std': trial.suggest_float('std', 1.0, 3.0, step=0.1)
-        }
+        # Gerar parâmetros a partir dos ranges definidos
+        params = {}
         
-        # Verificar se TP > SL (geralmente uma boa prática)
-        if params['tp'] <= params['sl']:
-            return float('-inf')  # Penalizar fortemente estas combinações
+        for param_name, param_range in self.param_ranges.items():
+            if isinstance(param_range, list):
+                # Parâmetro categórico
+                params[param_name] = trial.suggest_categorical(param_name, param_range)
+            elif len(param_range) == 2:
+                # Range simples (min, max)
+                min_val, max_val = param_range
+                if isinstance(min_val, int) and isinstance(max_val, int):
+                    params[param_name] = trial.suggest_int(param_name, min_val, max_val)
+                else:
+                    params[param_name] = trial.suggest_float(param_name, min_val, max_val)
+            elif len(param_range) == 3:
+                # Range com step (min, max, step)
+                min_val, max_val, step = param_range
+                params[param_name] = trial.suggest_float(param_name, min_val, max_val, step=step)
+        
+        # Adicionar parâmetros fixos
+        params.update(self.fixed_params)
+        
+        # Adicionar allowed_hours
+        signal_args = params.copy()
+        signal_args['allowed_hours'] = [hour]
+        
+        # Extrair tp e sl (se existirem) para o backtester
+        tp = params.pop('tp', 30)  # Default
+        sl = params.pop('sl', 20)  # Default
+        
+        # Lógica de validação TP > SL (opcional)
+        if 'tp' in self.param_ranges and 'sl' in self.param_ranges:
+            if tp <= sl:
+                return float('-inf')  # Penalizar estas combinações
         
         # Configurar o backtester
-        bt = self._create_backtester(params['tp'], params['sl'])
+        bt = Backtester(
+            symbol=self.symbol,
+            timeframe=self.timeframe,
+            data_ini=self.data_ini,
+            data_fim=self.data_fim,
+            tp=tp,
+            sl=sl,
+            slippage=self.slippage,
+            tc=self.tc,
+            lote=self.lote,
+            valor_lote=self.valor_lote,
+            initial_cash=self.initial_cash,
+            path_base=self.path_base,
+            daytrade=self.daytrade
+        )
         
         # Executar backtest focando apenas na hora específica
         try:
             _, metrics = bt.run(
                 signal_function=self.strategy_function,
-                signal_args={
-                    "bb_length": params['bb_length'],
-                    "std": params['std'],
-                    "allowed_hours": [hour]
-                }
+                signal_args=signal_args
             )
             
             # Podemos usar diferentes métricas, dependendo do objetivo
@@ -202,33 +249,6 @@ class ForexStrategyOptimizer:
             print(f"Erro no backtest para hora {hour}: {str(e)}")
             return float('-inf')
             
-    def _create_backtester(self, tp, sl):
-        """
-        Cria uma instância do Backtester com as configurações atuais.
-        
-        Args:
-            tp (int): Take profit em pontos
-            sl (int): Stop loss em pontos
-            
-        Returns:
-            Backtester: Instância configurada do Backtester
-        """
-        return Backtester(
-            symbol=self.symbol,
-            timeframe=self.timeframe,
-            data_ini=self.data_ini,
-            data_fim=self.data_fim,
-            tp=tp,
-            sl=sl,
-            slippage=self.slippage,
-            tc=self.symbol_config['tc'],
-            lote=self.lote,
-            valor_lote=self.symbol_config['valor_lote'],
-            initial_cash=self.initial_cash,
-            path_base=self.path_base,
-            daytrade=self.daytrade
-        )
-    
     def optimize_hour(self, hour):
         """
         Otimiza estratégia para uma hora específica.
@@ -265,6 +285,9 @@ class ForexStrategyOptimizer:
             'total_return': study.best_trial.user_attrs.get('total_return', 0),
             'trades': study.best_trial.user_attrs.get('trades', 0)
         }
+        
+        # Adicionar parâmetros fixos nos resultados
+        best_params.update(self.fixed_params)
         
         # Salvar resultados
         results = {
@@ -345,31 +368,35 @@ class ForexStrategyOptimizer:
             hour = res['hour']
             params = res['best_params']
             
+            # Extrair tp e sl (se existirem) para o backtester
+            tp = params.get('tp', 30)  # Default
+            sl = params.get('sl', 20)  # Default
+            
             # Configurar o backtester para o período de validação
             bt = Backtester(
                 symbol=self.symbol,
                 timeframe=self.timeframe,
                 data_ini=validation_period[0],
                 data_fim=validation_period[1],
-                tp=params['tp'],
-                sl=params['sl'],
+                tp=tp,
+                sl=sl,
                 slippage=self.slippage,
-                tc=self.symbol_config['tc'],
+                tc=self.tc,
                 lote=self.lote,
-                valor_lote=self.symbol_config['valor_lote'],
+                valor_lote=self.valor_lote,
                 initial_cash=self.initial_cash,
                 path_base=self.path_base,
                 daytrade=self.daytrade
             )
             
+            # Preparar signal_args (sem tp/sl)
+            signal_args = {k: v for k, v in params.items() if k not in ['tp', 'sl']}
+            signal_args['allowed_hours'] = [hour]
+            
             # Executar backtest com os melhores parâmetros
             df, metrics = bt.run(
                 signal_function=self.strategy_function,
-                signal_args={
-                    "bb_length": params['bb_length'],
-                    "std": params['std'],
-                    "allowed_hours": [hour]
-                }
+                signal_args=signal_args
             )
             
             # Salvar gráfico de equity para essa hora
@@ -422,7 +449,7 @@ class ForexStrategyOptimizer:
             if res['metrics']['sortino_ratio'] > min_threshold:
                 hour = res['hour']
                 good_hours.append(hour)
-                good_params[hour] = res['params']
+                good_params[str(hour)] = res['params']  # Usar str como chave para serialização JSON
         
         # Verificar se temos horas suficientes
         if not good_hours:
@@ -438,7 +465,9 @@ class ForexStrategyOptimizer:
             'timeframe': self.timeframe,
             'strategy': self.strategy_function.__name__,
             'hours': good_hours,
-            'hour_params': good_params
+            'hour_params': good_params,
+            'tc': self.tc,
+            'valor_lote': self.valor_lote
         }
         
         # Salvar configuração da estratégia combinada
@@ -460,18 +489,18 @@ class ForexStrategyOptimizer:
         if self.combined_strategy is None:
             raise ValueError("Nenhuma estratégia combinada encontrada. Execute create_combined_strategy primeiro.")
         
-        # Criamos um backtester para a estratégia combinada
+        # Criamos um backtester para a estratégia combinada com valores default
         bt = Backtester(
             symbol=self.symbol,
             timeframe=self.timeframe,
             data_ini=self.data_ini,
             data_fim=self.data_fim,
-            tp=30,  # Não importa, será sobrescrito para cada hora
-            sl=20,  # Não importa, será sobrescrito para cada hora
+            tp=30,  # Não importa, será sobrescrito
+            sl=20,  # Não importa, será sobrescrito
             slippage=self.slippage,
-            tc=self.symbol_config['tc'],
+            tc=self.tc,
             lote=self.lote,
-            valor_lote=self.symbol_config['valor_lote'],
+            valor_lote=self.valor_lote,
             initial_cash=self.initial_cash,
             path_base=self.path_base,
             daytrade=self.daytrade
@@ -485,7 +514,11 @@ class ForexStrategyOptimizer:
         
         # Para cada hora, aplicar a estratégia com os parâmetros otimizados
         for hour in self.combined_strategy['hours']:
-            params = self.combined_strategy['hour_params'][hour]
+            str_hour = str(hour)  # Converter para string para acessar o dicionário
+            params = self.combined_strategy['hour_params'][str_hour]
+            
+            # Extrair tp e sl dos parâmetros (se existirem)
+            signal_args = {k: v for k, v in params.items() if k not in ['tp', 'sl']}
             
             # Criar uma máscara para a hora atual
             hour_mask = bt.df.index.hour == hour
@@ -493,8 +526,7 @@ class ForexStrategyOptimizer:
             # Calcular sinais apenas para essa hora
             signals = self.strategy_function(
                 bt.df[hour_mask], 
-                bb_length=params['bb_length'], 
-                std=params['std']
+                **signal_args
             )
             
             # Atribuir sinais ao dataframe principal
@@ -559,20 +591,29 @@ class ForexStrategyOptimizer:
             
         # Extrair dados para o dataframe
         data = []
+        param_names = set()
+        
+        # Primeiro, identifique todos os nomes de parâmetros
         for res in self.all_results:
-            data.append({
+            param_names.update(res['best_params'].keys())
+        
+        # Adicione colunas para cada resultado
+        for res in self.all_results:
+            row = {
                 'hour': res['hour'],
                 'sortino': res['best_value'],
                 'profit_factor': res['metrics']['profit_factor'],
                 'win_rate': res['metrics']['win_rate'],
                 'max_drawdown': res['metrics']['max_drawdown'],
                 'total_return': res['metrics']['total_return'],
-                'trades': res['metrics']['trades'],
-                'sl': res['best_params']['sl'],
-                'tp': res['best_params']['tp'],
-                'bb_length': res['best_params']['bb_length'],
-                'std': res['best_params']['std']
-            })
+                'trades': res['metrics']['trades']
+            }
+            
+            # Adicione todos os parâmetros (com valores default se não existirem)
+            for param in param_names:
+                row[param] = res['best_params'].get(param, None)
+                
+            data.append(row)
         
         # Criar dataframe
         df = pd.DataFrame(data)
@@ -581,7 +622,7 @@ class ForexStrategyOptimizer:
         # Salvar como CSV
         df.to_csv(os.path.join(self.run_dir, "performance_by_hour.csv"), index=False)
         
-        # Criar visualizações
+        # Criar visualizações de métricas
         plt.figure(figsize=(14, 10))
         
         # Gráfico de barras do Sortino Ratio por hora
@@ -624,62 +665,48 @@ class ForexStrategyOptimizer:
         plt.savefig(os.path.join(self.run_dir, "performance_summary.png"))
         plt.close()
         
-        # Gráfico dos parâmetros ótimos por hora
-        plt.figure(figsize=(14, 10))
+        # Criar visualizações de parâmetros (até 4 parâmetros)
+        param_cols = [col for col in df.columns if col not in ['hour', 'sortino', 'profit_factor', 'win_rate', 'max_drawdown', 'total_return', 'trades']]
         
-        # BB Length
-        plt.subplot(2, 2, 1)
-        plt.bar(df['hour'], df['bb_length'], color='blue', alpha=0.7)
-        plt.title('BB Length Ótimo por Hora')
-        plt.xlabel('Hora')
-        plt.ylabel('BB Length')
-        plt.grid(True, alpha=0.3)
-        plt.xticks(df['hour'])
-        
-        # Std
-        plt.subplot(2, 2, 2)
-        plt.bar(df['hour'], df['std'], color='green', alpha=0.7)
-        plt.title('STD Ótimo por Hora')
-        plt.xlabel('Hora')
-        plt.ylabel('STD')
-        plt.grid(True, alpha=0.3)
-        plt.xticks(df['hour'])
-        
-        # SL
-        plt.subplot(2, 2, 3)
-        plt.bar(df['hour'], df['sl'], color='red', alpha=0.7)
-        plt.title('Stop Loss Ótimo por Hora')
-        plt.xlabel('Hora')
-        plt.ylabel('SL')
-        plt.grid(True, alpha=0.3)
-        plt.xticks(df['hour'])
-        
-        # TP
-        plt.subplot(2, 2, 4)
-        plt.bar(df['hour'], df['tp'], color='orange', alpha=0.7)
-        plt.title('Take Profit Ótimo por Hora')
-        plt.xlabel('Hora')
-        plt.ylabel('TP')
-        plt.grid(True, alpha=0.3)
-        plt.xticks(df['hour'])
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.run_dir, "params_summary.png"))
-        plt.close()
+        if param_cols:
+            plt.figure(figsize=(14, 10))
+            
+            for i, param in enumerate(param_cols[:4]):  # Limitar a 4 parâmetros
+                if i < 4:  # Apenas 4 subplots
+                    plt.subplot(2, 2, i+1)
+                    plt.bar(df['hour'], df[param], color=plt.cm.tab10(i), alpha=0.7)
+                    plt.title(f'{param} Ótimo por Hora')
+                    plt.xlabel('Hora')
+                    plt.ylabel(param)
+                    plt.grid(True, alpha=0.3)
+                    plt.xticks(df['hour'])
+            
+            plt.tight_layout()
+            plt.savefig(os.path.join(self.run_dir, "params_summary.png"))
+            plt.close()
         
         return df
     
-    def run_pipeline(self, hours_to_optimize=None, min_threshold=0.5):
+    def run(self, signal_function, param_ranges, fixed_params=None, hours_to_optimize=None, min_threshold=0.5):
         """
         Executa o pipeline completo de otimização de estratégias.
         
         Args:
+            signal_function (callable): Função de sinal para definir posições
+            param_ranges (dict): Dicionário com os ranges de parâmetros a otimizar
+            fixed_params (dict, optional): Parâmetros fixos (não otimizados)
             hours_to_optimize (list): Lista de horas para otimizar (default: todas)
             min_threshold (float): Threshold mínimo para o sortino ratio
             
         Returns:
             str: Caminho para o diretório com os resultados
         """
+        self.strategy_function = signal_function
+        self.set_param_ranges(param_ranges)
+        
+        if fixed_params:
+            self.set_fixed_params(fixed_params)
+        
         print(f"{'='*80}")
         print(f"INICIANDO PIPELINE DE OTIMIZAÇÃO DE ESTRATÉGIAS FOREX")
         print(f"{'='*80}")
@@ -687,8 +714,10 @@ class ForexStrategyOptimizer:
         print(f"Timeframe: {self.timeframe}")
         print(f"Período: {self.data_ini} a {self.data_fim}")
         print(f"Estratégia base: {self.strategy_function.__name__}")
+        print(f"Parâmetros a otimizar: {self.param_ranges}")
+        print(f"Parâmetros fixos: {self.fixed_params}")
         print(f"{'='*80}\n")
-        
+
         # Configurar diretórios
         self.setup_dirs()
         print(f"Resultados serão salvos em: {self.run_dir}")
@@ -717,5 +746,6 @@ class ForexStrategyOptimizer:
         if self.combined_strategy:
             print("\nEtapa 5: Testando estratégia combinada...")
             df, metrics = self.test_combined_strategy()
-        else:
-            print("\nEtapa 5: Pulando teste da estratégia combinada")
+            
+        print(f"\nPipeline concluído! Resultados salvos em: {self.run_dir}")
+        return self.run_dir
