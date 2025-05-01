@@ -174,67 +174,82 @@ class StrategyOptimizer:
         Returns:
             float: Valor da métrica a ser otimizada
         """
-        # Gerar parâmetros a partir dos ranges definidos
-        params = {}
-        
-        for param_name, param_range in self.param_ranges.items():
-            if isinstance(param_range, list):
-                # Parâmetro categórico
-                params[param_name] = trial.suggest_categorical(param_name, param_range)
-            elif len(param_range) == 2:
-                # Range simples (min, max)
-                min_val, max_val = param_range
-                if isinstance(min_val, int) and isinstance(max_val, int):
-                    params[param_name] = trial.suggest_int(param_name, min_val, max_val)
-                else:
-                    params[param_name] = trial.suggest_float(param_name, min_val, max_val)
-            elif len(param_range) == 3:
-                # Range com step (min, max, step)
-                min_val, max_val, step = param_range
-                params[param_name] = trial.suggest_float(param_name, min_val, max_val, step=step)
-        
-        # Adicionar parâmetros fixos
-        params.update(self.fixed_params)
-        
-        # Adicionar allowed_hours
-        signal_args = params.copy()
-        signal_args['allowed_hours'] = [hour]
-        
-        # Extrair tp e sl (se existirem) para o backtester
-        tp = params.pop('tp', 30)  # Default
-        sl = params.pop('sl', 20)  # Default
-        
-        # Lógica de validação TP > SL (opcional)
-        if 'tp' in self.param_ranges and 'sl' in self.param_ranges:
-            if tp <= sl:
-                return float('-inf')  # Penalizar estas combinações
-        
-        # Configurar o backtester
-        bt = Backtester(
-            symbol=self.symbol,
-            timeframe=self.timeframe,
-            data_ini=self.data_ini,
-            data_fim=self.data_fim,
-            tp=tp,
-            sl=sl,
-            slippage=self.slippage,
-            tc=self.tc,
-            lote=self.lote,
-            valor_lote=self.valor_lote,
-            initial_cash=self.initial_cash,
-            path_base=self.path_base,
-            daytrade=self.daytrade
-        )
-        
-        # Executar backtest focando apenas na hora específica
         try:
-            _, metrics = bt.run(
-                signal_function=self.strategy_function,
-                signal_args=signal_args
+            # Gerar parâmetros a partir dos ranges definidos
+            strategy_params = {}
+            backtester_params = {}
+            
+            for param_name, param_range in self.param_ranges.items():
+                # Separar parâmetros para backtester e para estratégia
+                if param_name in ['tp', 'sl']:
+                    # Parâmetros especiais para o backtester
+                    if isinstance(param_range, list):
+                        value = trial.suggest_categorical(param_name, param_range)
+                    elif len(param_range) == 2:
+                        min_val, max_val = param_range
+                        value = trial.suggest_int(param_name, min_val, max_val)
+                    elif len(param_range) == 3:
+                        min_val, max_val, step = param_range
+                        value = int(trial.suggest_float(param_name, min_val, max_val, step=step))
+                    
+                    backtester_params[param_name] = value
+                else:
+                    # Parâmetros para a função de estratégia
+                    if isinstance(param_range, list):
+                        strategy_params[param_name] = trial.suggest_categorical(param_name, param_range)
+                    elif len(param_range) == 2:
+                        min_val, max_val = param_range
+                        if isinstance(min_val, int) and isinstance(max_val, int):
+                            strategy_params[param_name] = trial.suggest_int(param_name, min_val, max_val)
+                        else:
+                            strategy_params[param_name] = trial.suggest_float(param_name, min_val, max_val)
+                    elif len(param_range) == 3:
+                        min_val, max_val, step = param_range
+                        strategy_params[param_name] = trial.suggest_float(param_name, min_val, max_val, step=step)
+            
+            # Adicionar parâmetros fixos à estratégia
+            for k, v in self.fixed_params.items():
+                if k not in ['tp', 'sl']:
+                    strategy_params[k] = v
+            
+            # Extrair TP e SL dos parâmetros do backtester, com valores padrão
+            tp = backtester_params.get('tp', 30)
+            sl = backtester_params.get('sl', 20)
+            
+            # Print para debug
+            print(f"Trial {trial.number} para hora {hour}: Testando estratégia com parâmetros {strategy_params}")
+            print(f"Trial {trial.number} para hora {hour}: Usando backtester com TP={tp}, SL={sl}")            
+           
+            # Adicionar allowed_hours à estratégia
+            strategy_params['allowed_hours'] = [hour]
+            
+            # Configurar o backtester
+            bt = Backtester(
+                symbol=self.symbol,
+                timeframe=self.timeframe,
+                data_ini=self.data_ini,
+                data_fim=self.data_fim,
+                tp=tp,
+                sl=sl,
+                slippage=self.slippage,
+                tc=self.tc,
+                lote=self.lote,
+                valor_lote=self.valor_lote,
+                initial_cash=self.initial_cash,
+                path_base=self.path_base,
+                daytrade=self.daytrade
             )
             
-            # Podemos usar diferentes métricas, dependendo do objetivo
+            # Executar backtest focando apenas na hora específica
+            print(f"Executando backtest para trial {trial.number}, hora {hour}...")
+            _, metrics = bt.run(
+                signal_function=self.strategy_function,
+                signal_args=strategy_params
+            )
+            
+            # Resultado da otimização
             metric_value = metrics['sortino_ratio']
+            print(f"Trial {trial.number} concluído: Sortino = {metric_value:.4f}")
             
             # Adicionar métricas adicionais para o Optuna armazenar
             trial.set_user_attr('profit_factor', metrics['profit_factor'])
@@ -243,12 +258,24 @@ class StrategyOptimizer:
             trial.set_user_attr('total_return', metrics['total_return'])
             trial.set_user_attr('trades', metrics['total_trades'])
             
+            # Adicionar tp e sl aos resultados
+            all_params = strategy_params.copy()
+            all_params['tp'] = tp
+            all_params['sl'] = sl
+            
+            # Store all parameters for retrieval in optimize_hour
+            for param_name, param_value in all_params.items():
+                trial.set_user_attr(f"param_{param_name}", param_value)
+            
             return metric_value
         
         except Exception as e:
-            print(f"Erro no backtest para hora {hour}: {str(e)}")
+            import traceback
+            print(f"Erro no trial {trial.number} para hora {hour}:")
+            print(traceback.format_exc())
             return float('-inf')
-            
+
+
     def optimize_hour(self, hour):
         """
         Otimiza estratégia para uma hora específica.
@@ -263,56 +290,72 @@ class StrategyOptimizer:
         print(f"Otimizando estratégia para hora: {hour:02d}:00")
         print(f"{'='*50}")
         
-        # Criar função objetivo específica para a hora
-        objective = partial(self._objective_hour, hour=hour)
+        try:
+            # Criar função objetivo específica para a hora
+            objective = partial(self._objective_hour, hour=hour)
+            
+            # Configurar e executar o estudo Optuna
+            study_name = f"hora_{hour:02d}"
+            study = optuna.create_study(
+                direction="maximize",
+                study_name=study_name
+            )
+            
+            print(f"Iniciando otimização com {self.num_trials} trials para hora {hour}...")
+            study.optimize(objective, n_trials=self.num_trials)
+            print(f"Otimização concluída para hora {hour}.")
+            
+            # Extrair o melhor valor
+            best_value = study.best_value
+            
+            # Extrair os melhores parâmetros dos user_attrs
+            best_params = {}
+            for key, value in study.best_trial.user_attrs.items():
+                if key.startswith("param_"):
+                    param_name = key[6:]  # Remove "param_" prefix
+                    best_params[param_name] = value
+            
+            # Extrair métricas
+            best_metrics = {
+                'profit_factor': study.best_trial.user_attrs.get('profit_factor', 0),
+                'win_rate': study.best_trial.user_attrs.get('win_rate', 0),
+                'max_drawdown': study.best_trial.user_attrs.get('max_drawdown', 0),
+                'total_return': study.best_trial.user_attrs.get('total_return', 0),
+                'trades': study.best_trial.user_attrs.get('trades', 0)
+            }
+            
+            # Salvar resultados
+            results = {
+                'hour': hour,
+                'best_params': best_params,
+                'best_value': best_value,
+                'metrics': best_metrics
+            }
+            
+            # Salvar em arquivo JSON
+            if self.run_dir:
+                with open(os.path.join(self.run_dir, f"results_hour_{hour:02d}.json"), 'w') as f:
+                    json.dump(results, f, indent=4)
+            
+            print(f"\nMelhores parâmetros para hora {hour:02d}:")
+            print(f"Sortino Ratio: {best_value:.4f}")
+            print(f"Parâmetros: {best_params}")
+            print(f"Profit Factor: {best_metrics['profit_factor']:.4f}")
+            print(f"Win Rate: {best_metrics['win_rate']:.2%}")
+            print(f"Max Drawdown: {best_metrics['max_drawdown']:.2%}")
+            print(f"Total Return: ${best_metrics['total_return']:.2f}")
+            print(f"Total Trades: {best_metrics['trades']}")
+            
+            return results
         
-        # Configurar e executar o estudo Optuna
-        study_name = f"hora_{hour:02d}"
-        study = optuna.create_study(
-            direction="maximize",
-            study_name=study_name
-        )
-        
-        study.optimize(objective, n_trials=self.num_trials)
-        
-        # Extrair melhores parâmetros e resultados
-        best_params = study.best_trial.params
-        best_value = study.best_value
-        best_metrics = {
-            'profit_factor': study.best_trial.user_attrs.get('profit_factor', 0),
-            'win_rate': study.best_trial.user_attrs.get('win_rate', 0),
-            'max_drawdown': study.best_trial.user_attrs.get('max_drawdown', 0),
-            'total_return': study.best_trial.user_attrs.get('total_return', 0),
-            'trades': study.best_trial.user_attrs.get('trades', 0)
-        }
-        
-        # Adicionar parâmetros fixos nos resultados
-        best_params.update(self.fixed_params)
-        
-        # Salvar resultados
-        results = {
-            'hour': hour,
-            'best_params': best_params,
-            'best_value': best_value,
-            'metrics': best_metrics
-        }
-        
-        # Salvar em arquivo JSON
-        with open(os.path.join(self.run_dir, f"results_hour_{hour:02d}.json"), 'w') as f:
-            json.dump(results, f, indent=4)
-        
-        print(f"\nMelhores parâmetros para hora {hour:02d}:")
-        print(f"Sortino Ratio: {best_value:.4f}")
-        print(f"Parâmetros: {best_params}")
-        print(f"Profit Factor: {best_metrics['profit_factor']:.4f}")
-        print(f"Win Rate: {best_metrics['win_rate']:.2%}")
-        print(f"Max Drawdown: {best_metrics['max_drawdown']:.2%}")
-        print(f"Total Return: ${best_metrics['total_return']:.2f}")
-        print(f"Total Trades: {best_metrics['trades']}")
-        
-        return results
+        except Exception as e:
+            import traceback
+            print(f"Erro detalhado na otimização para hora {hour}:")
+            print(traceback.format_exc())
+            return None
     
     def optimize_all_hours(self, hours_to_optimize=None):
+        
         """
         Otimiza estratégia para todas as horas especificadas.
         
@@ -329,21 +372,23 @@ class StrategyOptimizer:
         if self.run_dir is None:
             self.setup_dirs()
             
-        # Otimizar cada hora (em paralelo se possível)
+        # Otimizar cada hora usando execução serial
         self.all_results = []
         
-        if self.max_workers > 1:
-            with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
-                futures = [executor.submit(self.optimize_hour, hour) for hour in hours_to_optimize]
-                for future in futures:
-                    self.all_results.append(future.result())
-        else:
-            for hour in hours_to_optimize:
+        print(f"Iniciando otimização serial para {len(hours_to_optimize)} horas...")
+        for hour in hours_to_optimize:
+            try:
                 result = self.optimize_hour(hour)
-                self.all_results.append(result)
-                
+                if result:  # Only add non-None results
+                    self.all_results.append(result)
+            except Exception as e:
+                import traceback
+                print(f"Erro na otimização da hora {hour}:")
+                print(traceback.format_exc())
+        
+        print(f"Otimização concluída para {len(self.all_results)} de {len(hours_to_optimize)} horas.")
         return self.all_results
-    
+        
     def validate_best_params(self, validation_period=None):
         """
         Valida os melhores parâmetros encontrados em um período separado (opcional).
