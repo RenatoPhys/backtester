@@ -19,8 +19,8 @@ from datetime import datetime
 import json
 from functools import partial
 from concurrent.futures import ProcessPoolExecutor
-from forex_backtester import Backtester
-from forex_backtester.strategies import bollinger_bands
+from .backtester import Backtester
+from .strategies.indicators import bollinger_bands
 
 
 class ForexStrategyOptimizer:
