@@ -80,13 +80,13 @@ class Backtester:
             signal_args (dict, optional): Argumentos adicionais para passar para a função de sinal.
         """
         
-        self.df['pct_change'] = self.df['close'].pct_change().fillna(0)
-        
+              
         if signal_function:
             args = signal_args or {}
             self.df['position'] = signal_function(self.df, **args)
         else:
             # Estratégia padrão simples
+            self.df['pct_change'] = self.df['close'].pct_change().fillna(0)
             self.df['position'] = np.where(self.df['pct_change'] > 0, 1, -1)
 
             
