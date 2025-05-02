@@ -73,7 +73,9 @@ class StrategyOptimizer:
                  max_workers=4, 
                  export_dir='./resultados',
                  tc=0.5,
-                 valor_lote=100000):
+                 valor_lote=100000,
+                 optimize_metric='sortino_ratio',
+                 direction='maximize'):
         """
         Inicializa o otimizador de estratégias.
         
@@ -92,6 +94,9 @@ class StrategyOptimizer:
             export_dir (str): Diretório para exportação de resultados
             tc (float): Custo de transação por lote
             valor_lote (float): Valor do lote em unidades da moeda base
+            optimize_metric (str): Métrica a ser otimizada. Opções: 'sortino_ratio', 'sharpe_ratio', 
+                                   'calmar_ratio', 'profit_factor', 'total_return', 'win_rate', etc.
+            direction (str): Direção da otimização: 'maximize' ou 'minimize'
         """
         # Armazenar configurações
         self.symbol = symbol
@@ -108,6 +113,11 @@ class StrategyOptimizer:
         self.export_dir = export_dir
         self.tc = tc
         self.valor_lote = valor_lote
+        self.optimize_metric = optimize_metric
+        self.direction = direction
+        
+        # Validar a métrica e direção de otimização
+        self._validate_optimization_params()
         
         # Estado interno
         self.run_dir = None
@@ -117,7 +127,38 @@ class StrategyOptimizer:
         self.param_ranges = {}
         self.strategy_function = None
         self.fixed_params = {}
+    
+    def _validate_optimization_params(self):
+        """
+        Valida os parâmetros de otimização.
         
+        Raises:
+            ValueError: Se a métrica de otimização não for válida.
+            ValueError: Se a direção de otimização não for válida.
+        """
+        valid_metrics = [
+            'sortino_ratio', 'sharpe_ratio', 'calmar_ratio', 'profit_factor',
+            'total_return', 'total_return_pct', 'annual_return', 'win_rate',
+            'expectancy', 'win_loss_ratio', 'max_drawdown'
+        ]
+        
+        valid_directions = ['maximize', 'minimize']
+        
+        if self.optimize_metric not in valid_metrics:
+            raise ValueError(f"Métrica de otimização inválida: {self.optimize_metric}. "
+                            f"Opções válidas: {', '.join(valid_metrics)}")
+        
+        if self.direction not in valid_directions:
+            raise ValueError(f"Direção de otimização inválida: {self.direction}. "
+                            f"Opções válidas: {', '.join(valid_directions)}")
+        
+        # Para algumas métricas, a direção de otimização é óbvia e deve ser respeitada
+        inverse_metrics = ['max_drawdown']  # Métricas que geralmente são minimizadas
+        
+        if self.optimize_metric in inverse_metrics and self.direction == 'maximize':
+            print(f"AVISO: A métrica '{self.optimize_metric}' geralmente é minimizada, "
+                  f"mas foi selecionada para maximização.")
+            
     def setup_dirs(self):
         """
         Configura diretórios necessários para resultados e logs.
@@ -160,7 +201,9 @@ class StrategyOptimizer:
             'valor_lote': self.valor_lote,
             'param_ranges': self.param_ranges,
             'fixed_params': self.fixed_params,
-            'strategy': self.strategy_function.__name__ if self.strategy_function else None
+            'strategy': self.strategy_function.__name__ if self.strategy_function else None,
+            'optimize_metric': self.optimize_metric,
+            'direction': self.direction
         }
         
         save_json(config, os.path.join(self.run_dir, "config.json"))
@@ -280,11 +323,24 @@ class StrategyOptimizer:
                 signal_args=strategy_params
             )
             
-            # Resultado da otimização
-            metric_value = metrics['sortino_ratio']
-            print(f"Trial {trial.number} concluído: Sortino = {metric_value:.4f}")
+            # Obter o valor da métrica selecionada
+            metric_value = metrics.get(self.optimize_metric, 0)
+            
+            # Ajuste para métricas que normalmente são minimizadas, quando a direção é 'minimize'
+            if self.direction == 'minimize':
+                if self.optimize_metric == 'max_drawdown':
+                    # max_drawdown já é positivo, então não precisa inverter
+                    pass
+                else:
+                    # Para outras métricas que queremos minimizar, invertemos o sinal
+                    metric_value = -metric_value
+            
+            print(f"Trial {trial.number} concluído: {self.optimize_metric} = {metric_value:.4f}")
             
             # Adicionar métricas adicionais para o Optuna armazenar
+            trial.set_user_attr('sortino_ratio', metrics['sortino_ratio'])
+            trial.set_user_attr('sharpe_ratio', metrics['sharpe_ratio'])
+            trial.set_user_attr('calmar_ratio', metrics['calmar_ratio'])
             trial.set_user_attr('profit_factor', metrics['profit_factor'])
             trial.set_user_attr('win_rate', metrics['win_rate'])
             trial.set_user_attr('max_drawdown', metrics['max_drawdown'])
@@ -306,7 +362,7 @@ class StrategyOptimizer:
             import traceback
             print(f"Erro no trial {trial.number} para hora {hour}:")
             print(traceback.format_exc())
-            return float('-inf')
+            return float('-inf') if self.direction == 'maximize' else float('inf')
 
 
     def optimize_hour(self, hour):
@@ -321,6 +377,7 @@ class StrategyOptimizer:
         """
         print(f"\n{'='*50}")
         print(f"Otimizando estratégia para hora: {hour:02d}:00")
+        print(f"Métrica: {self.optimize_metric} - Direção: {self.direction}")
         print(f"{'='*50}")
         
         try:
@@ -330,7 +387,7 @@ class StrategyOptimizer:
             # Configurar e executar o estudo Optuna
             study_name = f"hora_{hour:02d}"
             study = optuna.create_study(
-                direction="maximize",
+                direction=self.direction,
                 study_name=study_name
             )
             
@@ -341,6 +398,11 @@ class StrategyOptimizer:
             # Extrair o melhor valor
             best_value = study.best_value
             
+            # Ajustar o valor da métrica para exibição se a direção for minimizar
+            display_value = best_value
+            if self.direction == 'minimize' and self.optimize_metric != 'max_drawdown':
+                display_value = -best_value
+            
             # Extrair os melhores parâmetros dos user_attrs
             best_params = {}
             for key, value in study.best_trial.user_attrs.items():
@@ -350,6 +412,9 @@ class StrategyOptimizer:
             
             # Extrair métricas
             best_metrics = {
+                'sortino_ratio': study.best_trial.user_attrs.get('sortino_ratio', 0),
+                'sharpe_ratio': study.best_trial.user_attrs.get('sharpe_ratio', 0),
+                'calmar_ratio': study.best_trial.user_attrs.get('calmar_ratio', 0),
                 'profit_factor': study.best_trial.user_attrs.get('profit_factor', 0),
                 'win_rate': study.best_trial.user_attrs.get('win_rate', 0),
                 'max_drawdown': study.best_trial.user_attrs.get('max_drawdown', 0),
@@ -361,7 +426,10 @@ class StrategyOptimizer:
             results = {
                 'hour': hour,
                 'best_params': best_params,
-                'best_value': best_value,
+                'best_value': display_value,  # Usar o valor para exibição
+                'raw_best_value': best_value,  # Salvar o valor bruto da otimização
+                'optimize_metric': self.optimize_metric,
+                'direction': self.direction,
                 'metrics': best_metrics
             }
 
@@ -371,7 +439,7 @@ class StrategyOptimizer:
                 save_json(results, os.path.join(self.run_dir, f"results_hour_{hour:02d}.json"))
             
             print(f"\nMelhores parâmetros para hora {hour:02d}:")
-            print(f"Sortino Ratio: {best_value:.4f}")
+            print(f"{self.optimize_metric}: {display_value:.4f}")
             print(f"Parâmetros: {best_params}")
             print(f"Profit Factor: {best_metrics['profit_factor']:.4f}")
             print(f"Win Rate: {best_metrics['win_rate']:.2%}")
@@ -491,6 +559,8 @@ class StrategyOptimizer:
                 'params': params,
                 'metrics': {
                     'sortino_ratio': metrics['sortino_ratio'],
+                    'sharpe_ratio': metrics['sharpe_ratio'],
+                    'calmar_ratio': metrics['calmar_ratio'],
                     'profit_factor': metrics['profit_factor'],
                     'win_rate': metrics['win_rate'],
                     'max_drawdown': metrics['max_drawdown'],
@@ -510,7 +580,7 @@ class StrategyOptimizer:
         Cria uma estratégia combinada usando apenas as horas com bons resultados.
         
         Args:
-            min_threshold (float): Threshold mínimo para o sortino ratio
+            min_threshold (float): Threshold mínimo para a métrica de otimização
             
         Returns:
             dict: Configuração da estratégia combinada
@@ -523,14 +593,25 @@ class StrategyOptimizer:
         good_params = {}
         
         for res in self.validation_results:
-            if res['metrics']['sortino_ratio'] > min_threshold:
+            # Verificar o valor da métrica escolhida
+            metric_value = res['metrics'].get(self.optimize_metric, 0)
+            
+            # Para métricas que queremos minimizar (como drawdown) a condição é invertida
+            threshold_condition = True
+            if self.direction == 'maximize':
+                threshold_condition = metric_value > min_threshold
+            else:
+                # Para minimização, o valor deve ser menor que o threshold
+                threshold_condition = metric_value < min_threshold
+            
+            if threshold_condition:
                 hour = res['hour']
                 good_hours.append(hour)
                 good_params[str(hour)] = res['params']  # Usar str como chave para serialização JSON
         
         # Verificar se temos horas suficientes
         if not good_hours:
-            print("Nenhuma hora passou pelo threshold mínimo!")
+            print(f"Nenhuma hora passou pelo threshold de {min_threshold} para a métrica {self.optimize_metric}!")
             return None
         
         # Ordenar horas
@@ -544,7 +625,9 @@ class StrategyOptimizer:
             'hours': good_hours,
             'hour_params': good_params,
             'tc': self.tc,
-            'valor_lote': self.valor_lote
+            'valor_lote': self.valor_lote,
+            'optimize_metric': self.optimize_metric,
+            'direction': self.direction
         }
         
         # Salvar configuração da estratégia combinada
@@ -649,6 +732,7 @@ class StrategyOptimizer:
         print(f"Sharpe Ratio: {metrics['sharpe_ratio']:.4f}")
         print(f"Sortino Ratio: {metrics['sortino_ratio']:.4f}")
         print(f"Calmar Ratio: {metrics['calmar_ratio']:.4f}")
+        print(f"Métrica otimizada ({self.optimize_metric}): {metrics[self.optimize_metric]:.4f}")
         
         return bt.df, metrics
     
