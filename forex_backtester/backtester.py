@@ -542,64 +542,6 @@ class Backtester:
         import pandas as pd
         import matplotlib.cm as cm
         
-        ## Extrair hora do dia e data
-        #df_analysis = self.df.copy()
-        #df_analysis['hour'] = df_analysis.index.hour
-        #df_analysis['date'] = df_analysis.index.date
-        #
-        ## Criar campos para lucros separados por hora e posição
-        #hours = sorted(df_analysis['hour'].unique())
-        #
-        ## Criar dataframe diário para análise
-        #daily_df = pd.DataFrame(index=pd.DatetimeIndex(df_analysis['date'].unique()))
-        #
-        ## Preencher campos de lucro por hora e por tipo de posição
-        #for hour in hours:
-        #    hour_key = f'profit_hour_{hour}'
-        #    buy_key = f'profit_hour_buy_{hour}'
-        #    sell_key = f'profit_hour_sell_{hour}'
-        #    
-        #    # Inicializar com zeros
-        #    df_analysis[hour_key] = 0.0
-        #    df_analysis[buy_key] = 0.0
-        #    df_analysis[sell_key] = 0.0
-        #    
-        #    # Atribuir lucros à hora correspondente
-        #    hour_mask = df_analysis['hour'] == hour
-        #    df_analysis.loc[hour_mask, hour_key] = df_analysis.loc[hour_mask, 'strategy']
-        #    df_analysis.loc[hour_mask & (df_analysis['position'] == 1), buy_key] = df_analysis.loc[hour_mask & (df_analysis['position'] == 1), 'strategy']
-        #    df_analysis.loc[hour_mask & (df_analysis['position'] == -1), sell_key] = df_analysis.loc[hour_mask & (df_analysis['position'] == -1), 'strategy']
-        #
-        ## Agrupar por data para obter resultados diários
-        #for hour in hours:
-        #    hour_key = f'profit_hour_{hour}'
-        #    buy_key = f'profit_hour_buy_{hour}'
-        #    sell_key = f'profit_hour_sell_{hour}'
-        #    
-        #    # Agrupar por data e somar
-        #    hour_grouped = df_analysis.groupby('date')[hour_key].sum()
-        #    buy_grouped = df_analysis.groupby('date')[buy_key].sum()
-        #    sell_grouped = df_analysis.groupby('date')[sell_key].sum()
-        #    
-        #    # Adicionar ao dataframe diário
-        #    daily_df[hour_key] = hour_grouped
-        #    daily_df[buy_key] = buy_grouped
-        #    daily_df[sell_key] = sell_grouped
-        #
-        ## Calcular valores acumulados
-        #for hour in hours:
-        #    hour_key = f'profit_hour_{hour}'
-        #    buy_key = f'profit_hour_buy_{hour}'
-        #    sell_key = f'profit_hour_sell_{hour}'
-        #    
-        #    cum_hour_key = f'cum_hour_{hour}'
-        #    cum_buy_key = f'cum_hour_buy_{hour}'
-        #    cum_sell_key = f'cum_hour_sell_{hour}'
-        #    
-        #    daily_df[cum_hour_key] = daily_df[hour_key].cumsum().fillna(0)
-        #    daily_df[cum_buy_key] = daily_df[buy_key].cumsum().fillna(0)
-        #    daily_df[cum_sell_key] = daily_df[sell_key].cumsum().fillna(0)
-
         # Cópia do DataFrame original
         df_analysis = self.df.copy()
         df_analysis['hour'] = df_analysis.index.hour
