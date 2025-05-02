@@ -130,7 +130,7 @@ class StrategyOptimizer:
         
         # Criar diretório específico para essa execução com timestamp
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        run_dir = os.path.join(self.export_dir, f"run_{timestamp}")
+        run_dir = os.path.join(self.export_dir, f"run_{self.symbol}_{timestamp}")
         os.makedirs(run_dir)
         
         # Armazenar diretório da execução
@@ -742,17 +742,29 @@ class StrategyOptimizer:
         param_cols = [col for col in df.columns if col not in ['hour', 'sortino', 'profit_factor', 'win_rate', 'max_drawdown', 'total_return', 'trades']]
         
         if param_cols:
-            plt.figure(figsize=(14, 10))
+            n_params = len(param_cols)
             
-            for i, param in enumerate(param_cols[:4]):  # Limitar a 4 parâmetros
-                if i < 4:  # Apenas 4 subplots
-                    plt.subplot(2, 2, i+1)
-                    plt.bar(df['hour'], df[param], color=plt.cm.tab10(i), alpha=0.7)
-                    plt.title(f'{param} Ótimo por Hora')
-                    plt.xlabel('Hora')
-                    plt.ylabel(param)
-                    plt.grid(True, alpha=0.3)
-                    plt.xticks(df['hour'])
+            # Calcular layout automático
+            if n_params <= 2:
+                rows, cols = 1, n_params
+            elif n_params <= 4:
+                rows, cols = 2, 2
+            else:
+                rows, cols = 3, 2  # Para 5-6 parâmetros
+                if n_params > 6:
+                    print(f"Atenção: Apenas os primeiros 6 parâmetros serão visualizados de um total de {n_params}.")
+                    param_cols = param_cols[:6]
+                    
+            plt.figure(figsize=(14, 5 * rows))
+            
+            for i, param in enumerate(param_cols):
+                plt.subplot(rows, cols, i+1)
+                plt.bar(df['hour'], df[param], color=plt.cm.tab10(i % 10), alpha=0.7)
+                plt.title(f'{param} Ótimo por Hora')
+                plt.xlabel('Hora')
+                plt.ylabel(param)
+                plt.grid(True, alpha=0.3)
+                plt.xticks(df['hour'])
             
             plt.tight_layout()
             plt.savefig(os.path.join(self.run_dir, "params_summary.png"))
