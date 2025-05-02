@@ -16,11 +16,40 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
-import json
+#import json
+import simplejson as json
 from functools import partial
 from concurrent.futures import ProcessPoolExecutor
 from .backtester import Backtester
 
+
+# Adicione estas definições no nível global do arquivo
+class NumpyEncoder(json.JSONEncoder):
+    """
+    Codificador JSON personalizado que lida com tipos NumPy.
+    """
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
+        return super(NumpyEncoder, self).default(obj)
+    
+
+def save_json(data, filepath):
+    """
+    Função auxiliar para salvar dados como JSON com suporte a tipos NumPy.
+    
+    Args:
+        data: Dados a serem salvos
+        filepath: Caminho do arquivo onde os dados serão salvos
+    """
+    with open(filepath, 'w') as f:
+        json.dump(data, f, cls=NumpyEncoder, indent=4)
 
 class StrategyOptimizer:
     """
@@ -134,8 +163,7 @@ class StrategyOptimizer:
             'strategy': self.strategy_function.__name__ if self.strategy_function else None
         }
         
-        with open(os.path.join(self.run_dir, "config.json"), 'w') as f:
-            json.dump(config, f, indent=4)
+        save_json(config, os.path.join(self.run_dir, "config.json"))
             
     def set_param_ranges(self, param_ranges):
         """
@@ -177,22 +205,31 @@ class StrategyOptimizer:
         try:
             # Gerar parâmetros a partir dos ranges definidos
             strategy_params = {}
-            backtester_params = {}
+            
+            # Inicializar com valores padrão
+            tp = 0.15  # Valor padrão adequado para sua escala
+            sl = 0.15  # Valor padrão adequado para sua escala
             
             for param_name, param_range in self.param_ranges.items():
-                # Separar parâmetros para backtester e para estratégia
-                if param_name in ['tp', 'sl']:
-                    # Parâmetros especiais para o backtester
+                # Processar tp e sl preservando valores decimais
+                if param_name == 'tp':
                     if isinstance(param_range, list):
-                        value = trial.suggest_categorical(param_name, param_range)
+                        tp = trial.suggest_categorical(param_name, param_range)
                     elif len(param_range) == 2:
                         min_val, max_val = param_range
-                        value = trial.suggest_int(param_name, min_val, max_val)
+                        tp = trial.suggest_float(param_name, min_val, max_val)
                     elif len(param_range) == 3:
                         min_val, max_val, step = param_range
-                        value = int(trial.suggest_float(param_name, min_val, max_val, step=step))
-                    
-                    backtester_params[param_name] = value
+                        tp = trial.suggest_float(param_name, min_val, max_val, step=step)
+                elif param_name == 'sl':
+                    if isinstance(param_range, list):
+                        sl = trial.suggest_categorical(param_name, param_range)
+                    elif len(param_range) == 2:
+                        min_val, max_val = param_range
+                        sl = trial.suggest_float(param_name, min_val, max_val)
+                    elif len(param_range) == 3:
+                        min_val, max_val, step = param_range
+                        sl = trial.suggest_float(param_name, min_val, max_val, step=step)
                 else:
                     # Parâmetros para a função de estratégia
                     if isinstance(param_range, list):
@@ -212,25 +249,21 @@ class StrategyOptimizer:
                 if k not in ['tp', 'sl']:
                     strategy_params[k] = v
             
-            # Extrair TP e SL dos parâmetros do backtester, com valores padrão
-            tp = backtester_params.get('tp', 30)
-            sl = backtester_params.get('sl', 20)
-            
-            # Print para debug
+            # Print para debug - use {:.5f} para formatar os valores com 5 casas decimais
             print(f"Trial {trial.number} para hora {hour}: Testando estratégia com parâmetros {strategy_params}")
-            print(f"Trial {trial.number} para hora {hour}: Usando backtester com TP={tp}, SL={sl}")            
-           
+            print(f"Trial {trial.number} para hora {hour}: Usando backtester com TP={tp:.5f}, SL={sl:.5f}")            
+        
             # Adicionar allowed_hours à estratégia
             strategy_params['allowed_hours'] = [hour]
             
-            # Configurar o backtester
+            # Configurar o backtester com valores decimais
             bt = Backtester(
                 symbol=self.symbol,
                 timeframe=self.timeframe,
                 data_ini=self.data_ini,
                 data_fim=self.data_fim,
-                tp=tp,
-                sl=sl,
+                tp=tp,  # Valor decimal
+                sl=sl,  # Valor decimal
                 slippage=self.slippage,
                 tc=self.tc,
                 lote=self.lote,
@@ -331,11 +364,11 @@ class StrategyOptimizer:
                 'best_value': best_value,
                 'metrics': best_metrics
             }
-            
+
+           
             # Salvar em arquivo JSON
             if self.run_dir:
-                with open(os.path.join(self.run_dir, f"results_hour_{hour:02d}.json"), 'w') as f:
-                    json.dump(results, f, indent=4)
+                save_json(results, os.path.join(self.run_dir, f"results_hour_{hour:02d}.json"))
             
             print(f"\nMelhores parâmetros para hora {hour:02d}:")
             print(f"Sortino Ratio: {best_value:.4f}")
@@ -468,8 +501,7 @@ class StrategyOptimizer:
             })
         
         # Salvar resultados da validação
-        with open(os.path.join(self.run_dir, "validation_results.json"), 'w') as f:
-            json.dump(self.validation_results, f, indent=4)
+        save_json(self.validation_results, os.path.join(self.run_dir, "validation_results.json"))
         
         return self.validation_results
     
@@ -516,8 +548,7 @@ class StrategyOptimizer:
         }
         
         # Salvar configuração da estratégia combinada
-        with open(os.path.join(self.run_dir, "combined_strategy.json"), 'w') as f:
-            json.dump(self.combined_strategy, f, indent=4)
+        save_json(self.combined_strategy, os.path.join(self.run_dir, "combined_strategy.json"))
         
         print(f"\nEstratégia combinada criada com {len(good_hours)} horas:")
         print(f"Horas selecionadas: {good_hours}")
@@ -605,10 +636,7 @@ class StrategyOptimizer:
         plt.close()
         
         # Salvar métricas da estratégia combinada
-        with open(os.path.join(self.run_dir, "combined_metrics.json"), 'w') as f:
-            # Converter valores numpy para Python nativos
-            clean_metrics = {k: float(v) if isinstance(v, np.floating) else v for k, v in metrics.items()}
-            json.dump(clean_metrics, f, indent=4)
+        save_json(metrics, os.path.join(self.run_dir, "combined_metrics.json"))
         
         # Imprimir métricas principais
         print("\n===== RESULTADOS DA ESTRATÉGIA COMBINADA =====")
