@@ -640,7 +640,7 @@ class StrategyOptimizer:
     
     def test_combined_strategy(self):
         """
-        Testa a estratégia combinada.
+        Testa a estratégia combinada corrigindo o problema de combinação de posições.
         
         Returns:
             tuple: DataFrame de resultados e métricas
@@ -648,14 +648,16 @@ class StrategyOptimizer:
         if self.combined_strategy is None:
             raise ValueError("Nenhuma estratégia combinada encontrada. Execute create_combined_strategy primeiro.")
         
-        # Criamos um backtester para a estratégia combinada com valores default
-        bt = Backtester(
+        print("Testando estratégia combinada...")
+        
+        # Criar backtester base para carregar os dados
+        bt_base = Backtester(
             symbol=self.symbol,
             timeframe=self.timeframe,
             data_ini=self.data_ini,
             data_fim=self.data_fim,
-            tp=30,  # Não importa, será sobrescrito
-            sl=20,  # Não importa, será sobrescrito
+            tp=1,  # Valor temporário
+            sl=1,  # Valor temporário
             slippage=self.slippage,
             tc=self.tc,
             lote=self.lote,
@@ -665,76 +667,386 @@ class StrategyOptimizer:
             daytrade=self.daytrade
         )
         
-        # Carregar dados para poder modificá-los
-        bt.load_data()
+        # Carregar dados
+        bt_base.load_data()
         
-        # Criar uma coluna para armazenar as posições
-        bt.df['position'] = 0
+        # Criar dicionário para armazenar resultados de cada hora
+        hour_results = {}
         
-        # Para cada hora, aplicar a estratégia com os parâmetros otimizados
+        # Para cada hora, executar o backtest separadamente
         for hour in self.combined_strategy['hours']:
-            str_hour = str(hour)  # Converter para string para acessar o dicionário
+            str_hour = str(hour)
             params = self.combined_strategy['hour_params'][str_hour]
             
-            # Extrair tp e sl dos parâmetros (se existirem)
-            signal_args = {k: v for k, v in params.items() if k not in ['tp', 'sl']}
+            # Extrair tp e sl
+            tp = params.get('tp', 0.15)
+            sl = params.get('sl', 0.15)
             
-            # Criar uma máscara para a hora atual
-            hour_mask = bt.df.index.hour == hour
+            print(f"Processando hora {hour:02d} com TP={tp:.5f}, SL={sl:.5f}")
             
-            # Calcular sinais apenas para essa hora
-            signals = self.strategy_function(
-                bt.df[hour_mask], 
-                **signal_args
+            # Criar backtester específico para esta hora
+            bt_hour = Backtester(
+                symbol=self.symbol,
+                timeframe=self.timeframe,
+                data_ini=self.data_ini,
+                data_fim=self.data_fim,
+                tp=tp,
+                sl=sl,
+                slippage=self.slippage,
+                tc=self.tc,
+                lote=self.lote,
+                valor_lote=self.valor_lote,
+                initial_cash=self.initial_cash,
+                path_base=self.path_base,
+                daytrade=self.daytrade
             )
             
-            # Atribuir sinais ao dataframe principal
-            bt.df.loc[hour_mask, 'position'] = signals
+            # Preparar argumentos da estratégia
+            signal_args = {k: v for k, v in params.items() if k not in ['tp', 'sl']}
+            signal_args['allowed_hours'] = [hour]
+            
+            # Executar backtest para esta hora específica
+            df_hour, metrics_hour = bt_hour.run(
+                signal_function=self.strategy_function,
+                signal_args=signal_args
+            )
+            
+            # Armazenar resultados desta hora
+            hour_results[hour] = {
+                'df': df_hour,
+                'metrics': metrics_hour,
+                'tp': tp,
+                'sl': sl
+            }
         
-        # Continuar com o processo normal de backtest
-        bt.add_indices()
-        bt.calculate_stops()
-        bt.calculate_results()
-        metrics = bt.calculate_metrics()
+        # Agora combinar os resultados de todas as horas
+        print("Combinando resultados de todas as horas...")
         
-        # Salvar gráfico da curva de equity
-        plt.figure(figsize=(12, 6))
-        plt.plot(bt.df['equity'])
-        plt.title(f"Curva de Equity - Estratégia Combinada")
-        plt.grid(True)
-        plt.savefig(os.path.join(self.run_dir, "equity_combined.png"))
-        plt.close()
+        # Usar o DataFrame da primeira hora como base
+        first_hour = list(hour_results.keys())[0]
+        df_combined = hour_results[first_hour]['df'][['close', 'high', 'low', 'open', 'safra', 'idx', 'close_final', 'idx_final']].copy()
         
-        # Salvar outros gráficos úteis
-        bt.plot_equity_curve(figsize=(14, 10), include_drawdown=True)
-        plt.savefig(os.path.join(self.run_dir, "equity_with_dd.png"))
-        plt.close()
+        # Inicializar colunas combinadas
+        df_combined['position'] = 0
+        df_combined['strategy'] = 0.0
+        df_combined['status_trade'] = 0
+        df_combined['sl_idx'] = 0
+        df_combined['tp_idx'] = 0
+        df_combined['pts_final'] = 0.0
         
-        bt.plot_by_position(figsize=(14, 6))
-        plt.savefig(os.path.join(self.run_dir, "equity_by_position.png"))
-        plt.close()
+        # Combinar estratégias das diferentes horas
+        for hour, hour_data in hour_results.items():
+            df_hour = hour_data['df']
+            
+            # Criar máscara para os índices desta hora que têm posições
+            hour_mask = (df_hour.index.hour == hour) & (df_hour['position'] != 0)
+            
+            # Para cada entrada desta hora, copiar os dados completos
+            for idx in df_hour[hour_mask].index:
+                if idx in df_combined.index:
+                    # Copiar dados da posição
+                    df_combined.loc[idx, 'position'] = df_hour.loc[idx, 'position']
+                    df_combined.loc[idx, 'strategy'] = df_hour.loc[idx, 'strategy']
+                    df_combined.loc[idx, 'status_trade'] = df_hour.loc[idx, 'status_trade']
+                    df_combined.loc[idx, 'sl_idx'] = df_hour.loc[idx, 'sl_idx']
+                    df_combined.loc[idx, 'tp_idx'] = df_hour.loc[idx, 'tp_idx']
+                    df_combined.loc[idx, 'pts_final'] = df_hour.loc[idx, 'pts_final']
         
-        bt.plot_profit_by_hour(figsize=(14, 8))
-        plt.savefig(os.path.join(self.run_dir, "profit_by_hour.png"))
-        plt.close()
+        # Calcular métricas combinadas
+        print("Calculando métricas finais da estratégia combinada...")
+        
+        # Recalcular estratégia acumulada e equity
+        df_combined['cstrategy'] = df_combined['strategy'].cumsum()
+        df_combined['equity'] = self.initial_cash + df_combined['cstrategy']
+        
+        # Calcular retornos diários
+        df_combined['daily_returns_pct'] = df_combined['strategy'] / df_combined['equity'].shift(1).fillna(self.initial_cash)
+        
+        # Calcular drawdown
+        from .utils.drawdown_utils import calc_dd
+        dd_df = calc_dd(df_combined['cstrategy'])
+        df_combined['cummax'] = dd_df['cummax']
+        df_combined['drawdown'] = dd_df['drawdown']
+        df_combined['drawdown_pct'] = dd_df['drawdown_pct']
+        df_combined['underwater'] = dd_df['underwater']
+        df_combined['time_uw'] = dd_df['time_uw']
+        
+        # Calcular métricas usando a mesma lógica do backtester
+        metrics_combined = self._calculate_combined_metrics(df_combined)
+        
+        # Salvar gráficos
+        self._save_combined_plots(df_combined)
         
         # Salvar métricas da estratégia combinada
-        save_json(metrics, os.path.join(self.run_dir, "combined_metrics.json"))
+        save_json(metrics_combined, os.path.join(self.run_dir, "combined_metrics.json"))
         
         # Imprimir métricas principais
         print("\n===== RESULTADOS DA ESTRATÉGIA COMBINADA =====")
-        print(f"Retorno Total: ${metrics['total_return']:.2f} ({metrics['total_return_pct']:.2f}%)")
-        print(f"Retorno Anualizado: {metrics['annual_return']:.2f}%")
-        print(f"Drawdown Máximo: {metrics['max_drawdown']:.2%}")
-        print(f"Trades Totais: {metrics['total_trades']}")
-        print(f"Win Rate: {metrics['win_rate']:.2%}")
-        print(f"Profit Factor: {metrics['profit_factor']:.4f}")
-        print(f"Sharpe Ratio: {metrics['sharpe_ratio']:.4f}")
-        print(f"Sortino Ratio: {metrics['sortino_ratio']:.4f}")
-        print(f"Calmar Ratio: {metrics['calmar_ratio']:.4f}")
-        print(f"Métrica otimizada ({self.optimize_metric}): {metrics[self.optimize_metric]:.4f}")
+        print(f"Retorno Total: ${metrics_combined['total_return']:.2f} ({metrics_combined['total_return_pct']:.2f}%)")
+        print(f"Retorno Anualizado: {metrics_combined['annual_return']:.2f}%")
+        print(f"Drawdown Máximo: {metrics_combined['max_drawdown']:.2%}")
+        print(f"Trades Totais: {metrics_combined['total_trades']}")
+        print(f"Win Rate: {metrics_combined['win_rate']:.2%}")
+        print(f"Profit Factor: {metrics_combined['profit_factor']:.4f}")
+        print(f"Sharpe Ratio: {metrics_combined['sharpe_ratio']:.4f}")
+        print(f"Sortino Ratio: {metrics_combined['sortino_ratio']:.4f}")
+        print(f"Calmar Ratio: {metrics_combined['calmar_ratio']:.4f}")
+        print(f"Métrica otimizada ({self.optimize_metric}): {metrics_combined[self.optimize_metric]:.4f}")
         
-        return bt.df, metrics
+        # Análise por hora da estratégia combinada
+        self._analyze_combined_by_hour(df_combined)
+        
+        return df_combined, metrics_combined
+    
+    def _calculate_combined_metrics(self, df):
+        """
+        Calcula métricas para a estratégia combinada usando a mesma lógica do backtester.
+        
+        Args:
+            df (pandas.DataFrame): DataFrame com os resultados combinados
+            
+        Returns:
+            dict: Dicionário com as métricas calculadas
+        """
+        # Resultados básicos
+        initial_equity = self.initial_cash
+        final_equity = df['equity'].iloc[-1]
+        total_return = final_equity - initial_equity
+        total_return_pct = (final_equity / initial_equity - 1) * 100
+
+        # Métricas avançadas de drawdown
+        max_drawdown = abs(df['drawdown_pct'].min()) if len(df) > 0 else 0
+        max_drawdown_value = abs(df['drawdown'].min()) if len(df) > 0 else 0
+        max_time_underwater = df['time_uw'].max() if len(df) > 0 else 0
+        
+        # Contagem de períodos em drawdown
+        total_periods = len(df)
+        underwater_periods = df['underwater'].sum()
+        underwater_rate = underwater_periods / total_periods if total_periods > 0 else 0
+
+        # Análise de trades
+        df['trade_start'] = df['position'].diff().ne(0) & (df['position'] != 0)
+
+        # Estatísticas de trades
+        total_trades = df['trade_start'].sum()
+        if total_trades > 0:
+            win_trades = (df[df['trade_start']]['strategy'] > 0).sum()
+            loss_trades = (df[df['trade_start']]['strategy'] < 0).sum()
+            win_rate = win_trades / total_trades if total_trades > 0 else 0
+
+            # Análise de razão de saídas
+            tp_hits = (df[df['trade_start']]['status_trade'] == 1).sum()
+            sl_hits = (df[df['trade_start']]['status_trade'] == -1).sum()
+            time_exits = (df[df['trade_start']]['status_trade'] == 0).sum()
+
+            tp_rate = tp_hits / total_trades if total_trades > 0 else 0
+            sl_rate = sl_hits / total_trades if total_trades > 0 else 0
+            time_exit_rate = time_exits / total_trades if total_trades > 0 else 0
+
+            # Profit factor
+            gross_profits = df.loc[df['strategy'] > 0, 'strategy'].sum()
+            gross_losses = abs(df.loc[df['strategy'] < 0, 'strategy'].sum())
+            profit_factor = gross_profits / gross_losses if gross_losses != 0 else float('inf')
+
+            # Métricas de risco
+            daily_returns = df['daily_returns_pct'].resample('D').sum()
+            trading_days = len(daily_returns[daily_returns != 0])
+            years = trading_days / 252
+
+            # Retorno anual
+            if years > 0:
+                base = (1 + total_return_pct/100)
+                if base > 0:
+                    annual_return = (base ** (1/years) - 1) * 100
+                else:
+                    annual_return = -1 * (abs(base) ** (1/years) - 1) * 100
+            else:
+                annual_return = 0
+                        
+            # Volatilidade anualizada
+            annual_volatility = daily_returns.std() * np.sqrt(252)
+
+            # Ratios
+            sharpe_ratio = annual_return / (annual_volatility * 100) if annual_volatility != 0 else 0
+            sortino_ratio = annual_return / (daily_returns[daily_returns < 0].std() * np.sqrt(252) * 100) if len(daily_returns[daily_returns < 0]) > 0 else 0
+            calmar_ratio = annual_return / (max_drawdown * 100) if max_drawdown != 0 else 0
+
+            # Média de ganhos e perdas
+            avg_win = gross_profits / win_trades if win_trades > 0 else 0
+            avg_loss = gross_losses / loss_trades if loss_trades > 0 else 0
+            win_loss_ratio = avg_win / abs(avg_loss) if loss_trades > 0 else float('inf')
+
+            # Expectativa matemática
+            expectancy = (win_rate * avg_win - (1 - win_rate) * avg_loss) if (win_trades > 0 and loss_trades > 0) else 0
+
+        else:
+            # Valores padrão se não houver trades
+            win_rate = 0
+            tp_rate = sl_rate = time_exit_rate = 0
+            profit_factor = 0
+            annual_return = 0
+            annual_volatility = 0
+            sharpe_ratio = sortino_ratio = calmar_ratio = 0
+            avg_win = avg_loss = win_loss_ratio = expectancy = 0
+            win_trades = loss_trades = 0
+    
+        return {
+            'initial_cash': initial_equity,
+            'final_equity': final_equity,
+            'total_return': total_return,
+            'total_return_pct': total_return_pct,
+            'annual_return': annual_return,
+            'annual_volatility': annual_volatility * 100,
+            'total_trades': total_trades,
+            'win_trades': win_trades,
+            'loss_trades': loss_trades,
+            'win_rate': win_rate,
+            'tp_rate': tp_rate,
+            'sl_rate': sl_rate,
+            'time_exit_rate': time_exit_rate,
+            'profit_factor': profit_factor,
+            'max_drawdown': max_drawdown,
+            'max_drawdown_value': max_drawdown_value,
+            'max_time_underwater': max_time_underwater,
+            'underwater_rate': underwater_rate,
+            'sharpe_ratio': sharpe_ratio,
+            'sortino_ratio': sortino_ratio,
+            'calmar_ratio': calmar_ratio,
+            'avg_win': avg_win,
+            'avg_loss': avg_loss,
+            'win_loss_ratio': win_loss_ratio,
+            'expectancy': expectancy
+        }
+    
+    def _save_combined_plots(self, df):
+        """Salva gráficos da estratégia combinada."""
+        
+        # Gráfico de equity principal
+        plt.figure(figsize=(14, 10))
+        
+        # Subplot 1: Equity curve
+        plt.subplot(2, 1, 1)
+        plt.plot(df.index, df['equity'], linewidth=2)
+        plt.title(f'Curva de Equity - Estratégia Combinada ({self.symbol})')
+        plt.ylabel('Equity ($)')
+        plt.grid(True, alpha=0.3)
+        
+        # Subplot 2: Drawdown
+        plt.subplot(2, 1, 2)
+        plt.fill_between(df.index, df['drawdown'], 0, color='red', alpha=0.3)
+        plt.title('Drawdown')
+        plt.xlabel('Data')
+        plt.ylabel('Drawdown ($)')
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.run_dir, "equity_combined_detailed.png"), dpi=300)
+        plt.close()
+        
+        # Gráfico de posições
+        plt.figure(figsize=(14, 6))
+        
+        # Separar por posições
+        df_analysis = df.copy()
+        df_analysis['profit_buy'] = 0.0
+        df_analysis['profit_sell'] = 0.0
+        
+        df_analysis.loc[df_analysis['position'] == 1, 'profit_buy'] = df_analysis.loc[df_analysis['position'] == 1, 'strategy']
+        df_analysis.loc[df_analysis['position'] == -1, 'profit_sell'] = df_analysis.loc[df_analysis['position'] == -1, 'strategy']
+        
+        df_analysis['cstrategy_buy'] = df_analysis['profit_buy'].cumsum()
+        df_analysis['cstrategy_sell'] = df_analysis['profit_sell'].cumsum()
+        
+        plt.plot(df_analysis.index, df_analysis['cstrategy'], label='Total', linewidth=2)
+        plt.plot(df_analysis.index, df_analysis['cstrategy_buy'], label='Compras', linewidth=1.5)
+        plt.plot(df_analysis.index, df_analysis['cstrategy_sell'], label='Vendas', linewidth=1.5)
+        
+        plt.title(f'Retorno Acumulado por Tipo de Posição - Estratégia Combinada')
+        plt.xlabel('Data')
+        plt.ylabel('Resultado ($)')
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.run_dir, "equity_by_position_combined.png"), dpi=300)
+        plt.close()
+        
+    def _analyze_combined_by_hour(self, df):
+        """Analisa o desempenho da estratégia combinada por hora."""
+        
+        # Extrair hora e calcular lucro por hora
+        df_analysis = df.copy()
+        df_analysis['hour'] = df_analysis.index.hour
+        
+        # Analisar por hora
+        hourly_results = {'hour': [], 'total_profit': [], 'trades': [], 'win_rate': []}
+        
+        hours = sorted(df_analysis['hour'].unique())
+        
+        for hour in hours:
+            hour_data = df_analysis[df_analysis['hour'] == hour]
+            
+            total_profit = hour_data['strategy'].sum()
+            trades_count = (hour_data['position'] != 0).sum()
+            
+            if trades_count > 0:
+                wins = (hour_data['strategy'] > 0).sum()
+                win_rate = wins / trades_count
+            else:
+                win_rate = 0
+            
+            hourly_results['hour'].append(hour)
+            hourly_results['total_profit'].append(total_profit)
+            hourly_results['trades'].append(trades_count)
+            hourly_results['win_rate'].append(win_rate)
+        
+        # Criar DataFrame e salvar
+        hourly_df = pd.DataFrame(hourly_results)
+        hourly_df.to_csv(os.path.join(self.run_dir, "combined_performance_by_hour.csv"), index=False)
+        
+        # Gráfico de desempenho por hora
+        plt.figure(figsize=(14, 10))
+        
+        plt.subplot(2, 2, 1)
+        plt.bar(hourly_df['hour'], hourly_df['total_profit'], color='blue', alpha=0.7)
+        plt.title('Lucro Total por Hora - Estratégia Combinada')
+        plt.xlabel('Hora')
+        plt.ylabel('Lucro ($)')
+        plt.grid(True, alpha=0.3)
+        
+        plt.subplot(2, 2, 2)
+        plt.bar(hourly_df['hour'], hourly_df['trades'], color='green', alpha=0.7)
+        plt.title('Número de Operações por Hora')
+        plt.xlabel('Hora')
+        plt.ylabel('Trades')
+        plt.grid(True, alpha=0.3)
+        
+        plt.subplot(2, 2, 3)
+        plt.bar(hourly_df['hour'], hourly_df['win_rate'], color='purple', alpha=0.7)
+        plt.title('Win Rate por Hora')
+        plt.xlabel('Hora')
+        plt.ylabel('Win Rate')
+        plt.grid(True, alpha=0.3)
+        
+        plt.subplot(2, 2, 4)
+        # Mostrar apenas horas ativas da estratégia combinada
+        active_hours = self.combined_strategy['hours']
+        active_mask = hourly_df['hour'].isin(active_hours)
+        
+        plt.bar(hourly_df.loc[active_mask, 'hour'], 
+                hourly_df.loc[active_mask, 'total_profit'], 
+                color='orange', alpha=0.7)
+        plt.title('Lucro das Horas Ativas na Estratégia')
+        plt.xlabel('Hora')
+        plt.ylabel('Lucro ($)')
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.run_dir, "combined_hourly_analysis.png"), dpi=300)
+        plt.close()
+        
+        print(f"\nAnálise por hora salva em: combined_hourly_analysis.png")
+        print(f"Horas ativas na estratégia: {active_hours}")
+        print(f"Lucro total das horas ativas: ${hourly_df.loc[active_mask, 'total_profit'].sum():.2f}")
     
     def create_performance_summary(self):
         """
@@ -758,7 +1070,7 @@ class StrategyOptimizer:
         for res in self.all_results:
             row = {
                 'hour': res['hour'],
-                'sortino': res['best_value'],
+                f'{self.optimize_metric}': res['best_value'],
                 'profit_factor': res['metrics']['profit_factor'],
                 'win_rate': res['metrics']['win_rate'],
                 'max_drawdown': res['metrics']['max_drawdown'],
@@ -782,12 +1094,12 @@ class StrategyOptimizer:
         # Criar visualizações de métricas
         plt.figure(figsize=(14, 10))
         
-        # Gráfico de barras do Sortino Ratio por hora
+        # Gráfico de barras da métrica otimizada por hora
         plt.subplot(2, 2, 1)
-        plt.bar(df['hour'], df['sortino'], color='blue', alpha=0.7)
-        plt.title('Sortino Ratio por Hora')
+        plt.bar(df['hour'], df[self.optimize_metric], color='blue', alpha=0.7)
+        plt.title(f'{self.optimize_metric.replace("_", " ").title()} por Hora')
         plt.xlabel('Hora')
-        plt.ylabel('Sortino Ratio')
+        plt.ylabel(self.optimize_metric.replace("_", " ").title())
         plt.grid(True, alpha=0.3)
         plt.xticks(df['hour'])
         
@@ -822,8 +1134,8 @@ class StrategyOptimizer:
         plt.savefig(os.path.join(self.run_dir, "performance_summary.png"))
         plt.close()
         
-        # Criar visualizações de parâmetros (até 4 parâmetros)
-        param_cols = [col for col in df.columns if col not in ['hour', 'sortino', 'profit_factor', 'win_rate', 'max_drawdown', 'total_return', 'trades']]
+        # Criar visualizações de parâmetros (até 6 parâmetros)
+        param_cols = [col for col in df.columns if col not in ['hour', self.optimize_metric, 'profit_factor', 'win_rate', 'max_drawdown', 'total_return', 'trades']]
         
         if param_cols:
             n_params = len(param_cols)
@@ -865,7 +1177,7 @@ class StrategyOptimizer:
             param_ranges (dict): Dicionário com os ranges de parâmetros a otimizar
             fixed_params (dict, optional): Parâmetros fixos (não otimizados)
             hours_to_optimize (list): Lista de horas para otimizar (default: todas)
-            min_threshold (float): Threshold mínimo para o sortino ratio
+            min_threshold (float): Threshold mínimo para a métrica de otimização
             
         Returns:
             str: Caminho para o diretório com os resultados
@@ -885,6 +1197,7 @@ class StrategyOptimizer:
         print(f"Estratégia base: {self.strategy_function.__name__}")
         print(f"Parâmetros a otimizar: {self.param_ranges}")
         print(f"Parâmetros fixos: {self.fixed_params}")
+        print(f"Métrica de otimização: {self.optimize_metric} ({self.direction})")
         print(f"{'='*80}\n")
 
         # Configurar diretórios
