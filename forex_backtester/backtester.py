@@ -153,9 +153,13 @@ class Backtester:
         self.df['time_uw'] = dd_df['time_uw']
 
         
-    def calculate_metrics(self):
-
-        """Calcula métricas detalhadas de desempenho da estratégia."""
+    def calculate_metrics(self, risk_free_rate=0.0):
+        """
+        Calcula métricas detalhadas de desempenho da estratégia.
+        
+        Args:
+            risk_free_rate (float): Taxa livre de risco anual em decimal (ex: 0.02 = 2% ao ano)
+        """
         
         # Resultados básicos
         initial_equity = self.initial_cash
@@ -163,28 +167,25 @@ class Backtester:
         total_return = final_equity - initial_equity
         total_return_pct = (final_equity / initial_equity - 1) * 100
 
-        # Métricas avançadas de drawdown
+        # Métricas avançadas de drawdown (código existente mantido)
         max_drawdown = abs(self.df['drawdown_pct'].min()) if len(self.df) > 0 else 0
         max_drawdown_value = abs(self.df['drawdown'].min()) if len(self.df) > 0 else 0
         max_time_underwater = self.df['time_uw'].max() if len(self.df) > 0 else 0
         
-        # Contagem de períodos em drawdown
         total_periods = len(self.df)
         underwater_periods = self.df['underwater'].sum()
         underwater_rate = underwater_periods / total_periods if total_periods > 0 else 0
 
-        # Análise de trades
-        # Identifica início de cada trade (quando position muda de valor)
+        # Análise de trades (código existente mantido)
         self.df['trade_start'] = self.df['position'].diff().ne(0) & (self.df['position'] != 0)
-
-        # Estatísticas de trades
         total_trades = self.df['trade_start'].sum()
+        
         if total_trades > 0:
             win_trades = (self.df[self.df['trade_start']]['strategy'] > 0).sum()
             loss_trades = (self.df[self.df['trade_start']]['strategy'] < 0).sum()
             win_rate = win_trades / total_trades if total_trades > 0 else 0
 
-            # Análise de razão de saídas
+            # Análise de razão de saídas (código existente mantido)
             tp_hits = (self.df[self.df['trade_start']]['status_trade'] == 1).sum()
             sl_hits = (self.df[self.df['trade_start']]['status_trade'] == -1).sum()
             time_exits = (self.df[self.df['trade_start']]['status_trade'] == 0).sum()
@@ -193,46 +194,66 @@ class Backtester:
             sl_rate = sl_hits / total_trades if total_trades > 0 else 0
             time_exit_rate = time_exits / total_trades if total_trades > 0 else 0
 
-            # Profit factor (ganhos brutos / perdas brutas)
+            # Profit factor (código existente mantido)
             gross_profits = self.df.loc[self.df['strategy'] > 0, 'strategy'].sum()
             gross_losses = abs(self.df.loc[self.df['strategy'] < 0, 'strategy'].sum())
             profit_factor = gross_profits / gross_losses if gross_losses != 0 else float('inf')
 
-            # Métricas de risco
-            # Usar retornos percentuais diários para cálculos mais precisos
-            daily_returns = self.df['daily_returns_pct'].resample('D').sum()
+            # ======= CÁLCULO DE MÉTRICAS DE RISCO =======
             
-            # Calcular retorno anualizado a partir do retorno total
-            trading_days = len(daily_returns[daily_returns != 0])
-            years = trading_days / 252  # Assumindo 252 dias de trading por ano
+            # 1. CALCULAR RETORNOS DIÁRIOS CORRETAMENTE
+            # Retornos baseados na mudança percentual da equity
+            self.df['equity_returns'] = self.df['equity'].pct_change().fillna(0)
             
-            # Retorno anual
-            if years > 0:
-                base = (1 + total_return_pct/100)
-                if base > 0:
-                    # Normal case - positive return
-                    annual_return = (base ** (1/years) - 1) * 100
+            # Agregar retornos por dia (composição correta para múltiplas operações no mesmo dia)
+            daily_returns = self.df['equity_returns'].resample('D').apply(
+                lambda x: (1 + x).prod() - 1 if len(x) > 0 else 0
+            )
+            
+            # Filtrar apenas dias com dados reais (remover zeros)
+            daily_returns_filtered = daily_returns[daily_returns != 0]
+            
+            # 2. CALCULAR MÉTRICAS ANUALIZADAS
+            trading_days = len(daily_returns_filtered)
+            years = trading_days / 252  # 252 dias úteis por ano
+            
+            if years > 0 and len(daily_returns_filtered) > 0:
+                # Retorno anualizado usando composição
+                total_return_decimal = (final_equity / initial_equity) - 1
+                annual_return = (1 + total_return_decimal) ** (1/years) - 1  # Em decimal
+                
+                # Volatilidade anualizada
+                annual_volatility = daily_returns_filtered.std() * np.sqrt(252)  # Em decimal
+                
+                # 3. SHARPE RATIO
+                sharpe_ratio = (annual_return - risk_free_rate) / annual_volatility if annual_volatility != 0 else 0
+                
+                # 4. SORTINO RATIO
+                downside_returns = daily_returns_filtered[daily_returns_filtered < 0]
+                if len(downside_returns) > 0:
+                    downside_volatility = downside_returns.std() * np.sqrt(252)
+                    sortino_ratio = (annual_return - risk_free_rate) / downside_volatility if downside_volatility != 0 else 0
                 else:
-                    # Negative return case
-                    # We use the formula: sign(base) * abs(base)^(1/years)
-                    annual_return = -1 * (abs(base) ** (1/years) - 1) * 100
+                    sortino_ratio = 0
+                
+                # 5. CALMAR RATIO
+                calmar_ratio = annual_return / max_drawdown if max_drawdown != 0 else 0
+                
+                # Converter para percentual apenas para exibição
+                annual_return_pct = annual_return * 100
+                annual_volatility_pct = annual_volatility * 100
+                
             else:
-                annual_return = 0
-                        
-            # Volatilidade anualizada baseada nos retornos percentuais
-            annual_volatility = daily_returns.std() * np.sqrt(252)
+                annual_return = annual_return_pct = 0
+                annual_volatility = annual_volatility_pct = 0
+                sharpe_ratio = sortino_ratio = calmar_ratio = 0
 
-            # Diversos ratios
-            sharpe_ratio = annual_return / (annual_volatility * 100) if annual_volatility != 0 else 0
-            sortino_ratio = annual_return / (daily_returns[daily_returns < 0].std() * np.sqrt(252) * 100) if len(daily_returns[daily_returns < 0]) > 0 else 0
-            calmar_ratio = annual_return / (max_drawdown * 100) if max_drawdown != 0 else 0
-
-            # Média de ganhos e perdas
+            # Média de ganhos e perdas (código existente mantido)
             avg_win = gross_profits / win_trades if win_trades > 0 else 0
             avg_loss = gross_losses / loss_trades if loss_trades > 0 else 0
             win_loss_ratio = avg_win / abs(avg_loss) if loss_trades > 0 else float('inf')
 
-            # Expectativa matemática (Expectancy)
+            # Expectativa matemática (código existente mantido)
             expectancy = (win_rate * avg_win - (1 - win_rate) * avg_loss) if (win_trades > 0 and loss_trades > 0) else 0
 
         else:
@@ -240,38 +261,39 @@ class Backtester:
             win_rate = 0
             tp_rate = sl_rate = time_exit_rate = 0
             profit_factor = 0
-            annual_return = 0
-            annual_volatility = 0
+            annual_return = annual_return_pct = 0
+            annual_volatility = annual_volatility_pct = 0
             sharpe_ratio = sortino_ratio = calmar_ratio = 0
             avg_win = avg_loss = win_loss_ratio = expectancy = 0
             win_trades = loss_trades = 0
-    
+
         return {
             'initial_cash': initial_equity,
             'final_equity': final_equity,
             'total_return': total_return,
             'total_return_pct': total_return_pct,
-            'annual_return': annual_return,
-            'annual_volatility': annual_volatility * 100,  # Converter para percentual
+            'annual_return': annual_return_pct,  # Retorna em % para compatibilidade
+            'annual_volatility': annual_volatility_pct,  # Retorna em % para compatibilidade
             'total_trades': total_trades,
             'win_trades': win_trades,
             'loss_trades': loss_trades,
             'win_rate': win_rate,
-            'tp_rate': tp_rate,  # % de trades que atingiram take profit
-            'sl_rate': sl_rate,  # % de trades que atingiram stop loss
-            'time_exit_rate': time_exit_rate,  # % de trades que fecharam por tempo
+            'tp_rate': tp_rate,
+            'sl_rate': sl_rate,
+            'time_exit_rate': time_exit_rate,
             'profit_factor': profit_factor,
             'max_drawdown': max_drawdown,
-            'max_drawdown_value': max_drawdown_value,  # Valor absoluto do drawdown máximo
-            'max_time_underwater': max_time_underwater,  # Tempo máximo em drawdown
-            'underwater_rate': underwater_rate,  # % do tempo em drawdown
-            'sharpe_ratio': sharpe_ratio,
-            'sortino_ratio': sortino_ratio,
-            'calmar_ratio': calmar_ratio,
+            'max_drawdown_value': max_drawdown_value,
+            'max_time_underwater': max_time_underwater,
+            'underwater_rate': underwater_rate,
+            'sharpe_ratio': sharpe_ratio,  # Agora calculado corretamente
+            'sortino_ratio': sortino_ratio,  # Agora calculado corretamente
+            'calmar_ratio': calmar_ratio,  # Agora calculado corretamente
             'avg_win': avg_win,
             'avg_loss': avg_loss,
             'win_loss_ratio': win_loss_ratio,
-            'expectancy': expectancy
+            'expectancy': expectancy,
+            'risk_free_rate': risk_free_rate  # Para referência
         }
 
     def print_metrics(self, metrics=None):

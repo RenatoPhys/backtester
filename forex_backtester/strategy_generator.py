@@ -798,7 +798,7 @@ class StrategyOptimizer:
         
         return df_combined, metrics_combined
     
-    def _calculate_combined_metrics(self, df):
+    def _calculate_combined_metrics(self, df, risk_free_rate=0.0):
         """
         Calcula métricas para a estratégia combinada usando a mesma lógica do backtester.
         
@@ -814,27 +814,25 @@ class StrategyOptimizer:
         total_return = final_equity - initial_equity
         total_return_pct = (final_equity / initial_equity - 1) * 100
 
-        # Métricas avançadas de drawdown
+        # Métricas avançadas de drawdown (código existente mantido)
         max_drawdown = abs(df['drawdown_pct'].min()) if len(df) > 0 else 0
         max_drawdown_value = abs(df['drawdown'].min()) if len(df) > 0 else 0
         max_time_underwater = df['time_uw'].max() if len(df) > 0 else 0
         
-        # Contagem de períodos em drawdown
         total_periods = len(df)
         underwater_periods = df['underwater'].sum()
         underwater_rate = underwater_periods / total_periods if total_periods > 0 else 0
 
-        # Análise de trades
+        # Análise de trades (código existente mantido)
         df['trade_start'] = df['position'].diff().ne(0) & (df['position'] != 0)
-
-        # Estatísticas de trades
         total_trades = df['trade_start'].sum()
+        
         if total_trades > 0:
             win_trades = (df[df['trade_start']]['strategy'] > 0).sum()
             loss_trades = (df[df['trade_start']]['strategy'] < 0).sum()
             win_rate = win_trades / total_trades if total_trades > 0 else 0
 
-            # Análise de razão de saídas
+            # Análise de razão de saídas (código existente mantido)
             tp_hits = (df[df['trade_start']]['status_trade'] == 1).sum()
             sl_hits = (df[df['trade_start']]['status_trade'] == -1).sum()
             time_exits = (df[df['trade_start']]['status_trade'] == 0).sum()
@@ -843,40 +841,66 @@ class StrategyOptimizer:
             sl_rate = sl_hits / total_trades if total_trades > 0 else 0
             time_exit_rate = time_exits / total_trades if total_trades > 0 else 0
 
-            # Profit factor
+            # Profit factor (código existente mantido)
             gross_profits = df.loc[df['strategy'] > 0, 'strategy'].sum()
             gross_losses = abs(df.loc[df['strategy'] < 0, 'strategy'].sum())
             profit_factor = gross_profits / gross_losses if gross_losses != 0 else float('inf')
 
-            # Métricas de risco
-            daily_returns = df['daily_returns_pct'].resample('D').sum()
-            trading_days = len(daily_returns[daily_returns != 0])
-            years = trading_days / 252
-
-            # Retorno anual
-            if years > 0:
-                base = (1 + total_return_pct/100)
-                if base > 0:
-                    annual_return = (base ** (1/years) - 1) * 100
+            # ======= CÁLCULO DE MÉTRICAS DE RISCO =======
+            
+            # 1. CALCULAR RETORNOS DIÁRIOS CORRETAMENTE
+            # Retornos baseados na mudança percentual da equity
+            df['equity_returns'] = df['equity'].pct_change().fillna(0)
+            
+            # Agregar retornos por dia (composição correta para múltiplas operações no mesmo dia)
+            daily_returns = df['equity_returns'].resample('D').apply(
+                lambda x: (1 + x).prod() - 1 if len(x) > 0 else 0
+            )
+            
+            # Filtrar apenas dias com dados reais (remover zeros)
+            daily_returns_filtered = daily_returns[daily_returns != 0]
+            
+            # 2. CALCULAR MÉTRICAS ANUALIZADAS
+            trading_days = len(daily_returns_filtered)
+            years = trading_days / 252  # 252 dias úteis por ano
+            
+            if years > 0 and len(daily_returns_filtered) > 0:
+                # Retorno anualizado usando composição
+                total_return_decimal = (final_equity / initial_equity) - 1
+                annual_return = (1 + total_return_decimal) ** (1/years) - 1  # Em decimal
+                
+                # Volatilidade anualizada
+                annual_volatility = daily_returns_filtered.std() * np.sqrt(252)  # Em decimal
+                
+                # 3. SHARPE RATIO
+                sharpe_ratio = (annual_return - risk_free_rate) / annual_volatility if annual_volatility != 0 else 0
+                
+                # 4. SORTINO RATIO
+                downside_returns = daily_returns_filtered[daily_returns_filtered < 0]
+                if len(downside_returns) > 0:
+                    downside_volatility = downside_returns.std() * np.sqrt(252)
+                    sortino_ratio = (annual_return - risk_free_rate) / downside_volatility if downside_volatility != 0 else 0
                 else:
-                    annual_return = -1 * (abs(base) ** (1/years) - 1) * 100
+                    sortino_ratio = 0
+                
+                # 5. CALMAR RATIO
+                calmar_ratio = annual_return / max_drawdown if max_drawdown != 0 else 0
+                
+                # Converter para percentual apenas para exibição
+                annual_return_pct = annual_return * 100
+                annual_volatility_pct = annual_volatility * 100
+                
             else:
-                annual_return = 0
-                        
-            # Volatilidade anualizada
-            annual_volatility = daily_returns.std() * np.sqrt(252)
+                annual_return = annual_return_pct = 0
+                annual_volatility = annual_volatility_pct = 0
+                sharpe_ratio = sortino_ratio = calmar_ratio = 0
 
-            # Ratios
-            sharpe_ratio = annual_return / (annual_volatility * 100) if annual_volatility != 0 else 0
-            sortino_ratio = annual_return / (daily_returns[daily_returns < 0].std() * np.sqrt(252) * 100) if len(daily_returns[daily_returns < 0]) > 0 else 0
-            calmar_ratio = annual_return / (max_drawdown * 100) if max_drawdown != 0 else 0
-
-            # Média de ganhos e perdas
+            # Média de ganhos e perdas (código existente mantido)
             avg_win = gross_profits / win_trades if win_trades > 0 else 0
             avg_loss = gross_losses / loss_trades if loss_trades > 0 else 0
             win_loss_ratio = avg_win / abs(avg_loss) if loss_trades > 0 else float('inf')
 
-            # Expectativa matemática
+            # Expectativa matemática (código existente mantido)
             expectancy = (win_rate * avg_win - (1 - win_rate) * avg_loss) if (win_trades > 0 and loss_trades > 0) else 0
 
         else:
@@ -884,19 +908,19 @@ class StrategyOptimizer:
             win_rate = 0
             tp_rate = sl_rate = time_exit_rate = 0
             profit_factor = 0
-            annual_return = 0
-            annual_volatility = 0
+            annual_return = annual_return_pct = 0
+            annual_volatility = annual_volatility_pct = 0
             sharpe_ratio = sortino_ratio = calmar_ratio = 0
             avg_win = avg_loss = win_loss_ratio = expectancy = 0
             win_trades = loss_trades = 0
-    
+
         return {
             'initial_cash': initial_equity,
             'final_equity': final_equity,
             'total_return': total_return,
             'total_return_pct': total_return_pct,
-            'annual_return': annual_return,
-            'annual_volatility': annual_volatility * 100,
+            'annual_return': annual_return_pct,  # Retorna em % para compatibilidade
+            'annual_volatility': annual_volatility_pct,  # Retorna em % para compatibilidade
             'total_trades': total_trades,
             'win_trades': win_trades,
             'loss_trades': loss_trades,
@@ -909,13 +933,14 @@ class StrategyOptimizer:
             'max_drawdown_value': max_drawdown_value,
             'max_time_underwater': max_time_underwater,
             'underwater_rate': underwater_rate,
-            'sharpe_ratio': sharpe_ratio,
-            'sortino_ratio': sortino_ratio,
-            'calmar_ratio': calmar_ratio,
+            'sharpe_ratio': sharpe_ratio,  # Agora calculado corretamente
+            'sortino_ratio': sortino_ratio,  # Agora calculado corretamente
+            'calmar_ratio': calmar_ratio,  # Agora calculado corretamente
             'avg_win': avg_win,
             'avg_loss': avg_loss,
             'win_loss_ratio': win_loss_ratio,
-            'expectancy': expectancy
+            'expectancy': expectancy,
+            'risk_free_rate': risk_free_rate  # Para referência
         }
     
     def _save_combined_plots(self, df):
