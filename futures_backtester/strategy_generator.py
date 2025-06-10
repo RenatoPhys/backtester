@@ -1,8 +1,8 @@
 """
-Forex Strategy Optimizer
+Strategy Optimizer
 
-Este módulo implementa uma estrutura OO para otimização de estratégias de trading FOREX
-usando o framework forex_backtester e otimização bayesiana via Optuna.
+Este módulo implementa uma estrutura OO para otimização de estratégias de trading 
+usando o framework futures_backtester e otimização bayesiana via Optuna.
 
 Características:
 - Otimização por horário do dia
@@ -53,7 +53,7 @@ def save_json(data, filepath):
 
 class StrategyOptimizer:
     """
-    Classe principal para otimização de estratégias FOREX.
+    Classe principal para otimização de estratégias.
     
     Esta classe encapsula todo o processo de otimização, validação e teste
     de estratégias de trading, com foco na otimização por horário do dia.
@@ -171,7 +171,7 @@ class StrategyOptimizer:
         
         # Criar diretório específico para essa execução com timestamp
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        run_dir = os.path.join(self.export_dir, f"run_{self.symbol}_{timestamp}")
+        run_dir = os.path.join(self.export_dir, f"run_{self.symbol}_{self.timeframe}_{timestamp}")
         os.makedirs(run_dir)
         
         # Armazenar diretório da execução
@@ -764,7 +764,7 @@ class StrategyOptimizer:
         
         # Calcular drawdown
         from .utils.drawdown_utils import calc_dd
-        dd_df = calc_dd(df_combined['cstrategy'])
+        dd_df = calc_dd(df_combined['equity'])
         df_combined['cummax'] = dd_df['cummax']
         df_combined['drawdown'] = dd_df['drawdown']
         df_combined['drawdown_pct'] = dd_df['drawdown_pct']
@@ -1214,7 +1214,7 @@ class StrategyOptimizer:
             self.set_fixed_params(fixed_params)
         
         print(f"{'='*80}")
-        print(f"INICIANDO PIPELINE DE OTIMIZAÇÃO DE ESTRATÉGIAS FOREX")
+        print(f"INICIANDO PIPELINE DE OTIMIZAÇÃO DE ESTRATÉGIAS")
         print(f"{'='*80}")
         print(f"Símbolo: {self.symbol}")
         print(f"Timeframe: {self.timeframe}")

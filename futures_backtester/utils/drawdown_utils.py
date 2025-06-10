@@ -21,20 +21,20 @@ def calc_dd(series):
             - time_uw: Tempo em drawdown (contagem de períodos)
     """
     # Cria um DataFrame para armazenar os resultados
-    df = pd.DataFrame({'cstrategy': series})
+    df = pd.DataFrame({'equity': series})
     
     # Calcula o máximo acumulado
-    df['cummax'] = df['cstrategy'].cummax()
+    df['cummax'] = df['equity'].cummax()
     
     # Calcula o drawdown em valor
-    df['drawdown'] = df['cstrategy'] - df['cummax']
+    df['drawdown'] = df['equity'] - df['cummax']
     
     # Calcula o drawdown em percentual
     df['drawdown_pct'] = df['drawdown'] / df['cummax'].replace(0, np.nan)
     
     # Identifica períodos underwater (abaixo do pico)
     df['underwater'] = 0
-    df.loc[df['cstrategy'] < df['cummax'], 'underwater'] = 1
+    df.loc[df['equity'] < df['cummax'], 'underwater'] = 1
     
     # Calcula mudanças no estado underwater
     df['change_uw'] = df['underwater'].diff().fillna(0)

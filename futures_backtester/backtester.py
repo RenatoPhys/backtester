@@ -10,7 +10,7 @@ from .utils.drawdown_utils import calc_dd  # Importa a nova função
 
 
 class Backtester:
-    """Classe para backtesting de estratégias sistemáticas em FOREX.
+    """Classe para backtesting de estratégias sistemáticas 
 
     Args:
         symbol (str): Símbolo do par de moedas (ex: 'EURUSD').
@@ -143,7 +143,7 @@ class Backtester:
         self.df['daily_returns_pct'] = self.df['strategy'] / self.df['equity'].shift(1).fillna(self.initial_cash)
         
         # Calcula drawdown e time underwater
-        dd_df = calc_dd(self.df['cstrategy'])
+        dd_df = calc_dd(self.df['equity'])
         
         # Adiciona as colunas de drawdown ao dataframe principal
         self.df['cummax'] = dd_df['cummax']

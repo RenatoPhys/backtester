@@ -3,12 +3,12 @@ requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "forex_backtester"
+name = "futures_backtester"
 version = "0.1.0"
 authors = [
     {name = "Renato Critelli", email = "renato.critelli.ifusp@gmail.com"}
 ]
-description = "Framework para backtesting de estratégias sistemáticas em FOREX"
+description = "Framework para backtesting de estratégias sistemáticas de trading"
 readme = "README.md"
 requires-python = ">=3.7"
 classifiers = [
@@ -27,5 +27,5 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/username/forex_backtester"
-"Bug Tracker" = "https://github.com/username/forex_backtester/issues"
+"Homepage" = "https://github.com/username/futures_backtester"
+"Bug Tracker" = "https://github.com/username/futures_backtester/issues"

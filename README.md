@@ -1,10 +1,10 @@
-# Forex Backtester
+# futures Backtester
 
-Framework de backtesting para estratégias sistemáticas em mercados FOREX.
+Framework de backtesting para estratégias sistemáticas em mercados Futuros.
 
 ## Características
 
-- Backtesting rápido e eficiente para dados FOREX
+- Backtesting rápido e eficiente para dados de futuros, moedas, commodities, etc.
 - Suporte a múltiplos timeframes
 - Implementação de Take Profit e Stop Loss
 - Cálculo de métricas de desempenho detalhadas
@@ -13,14 +13,14 @@ Framework de backtesting para estratégias sistemáticas em mercados FOREX.
 ## Instalação
 
 ```bash
-pip install forex-backtester
+pip install futures-backtester
 ```
 
 ## Uso Básico
 
 ```python
-from forex_backtester import Backtester
-from forex_backtester.strategies import SimpleMovingAverageCrossover
+from futures_backtester import Backtester
+from futures_backtester.strategies import SimpleMovingAverageCrossover
 
 # Configurar o backtester
 bt = Backtester(
