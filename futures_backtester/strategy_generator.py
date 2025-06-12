@@ -16,11 +16,11 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
-#import json
 import simplejson as json
 from functools import partial
 from concurrent.futures import ProcessPoolExecutor
 from .backtester import Backtester
+from .utils.metrics_utils import calculate_comprehensive_metrics, format_metrics_report
 
 
 # Adicione estas definições no nível global do arquivo
@@ -291,10 +291,6 @@ class StrategyOptimizer:
             for k, v in self.fixed_params.items():
                 if k not in ['tp', 'sl']:
                     strategy_params[k] = v
-            
-            # Print para debug - use {:.5f} para formatar os valores com 5 casas decimais
-            #print(f"Trial {trial.number} para hora {hour}: Testando estratégia com parâmetros {strategy_params}")
-            #print(f"Trial {trial.number} para hora {hour}: Usando backtester com TP={tp:.5f}, SL={sl:.5f}")            
         
             # Adicionar allowed_hours à estratégia
             strategy_params['allowed_hours'] = [hour]
@@ -317,10 +313,16 @@ class StrategyOptimizer:
             )
             
             # Executar backtest focando apenas na hora específica
-            #print(f"Executando backtest para trial {trial.number}, hora {hour}...")
-            _, metrics = bt.run(
+            df, _ = bt.run(
                 signal_function=self.strategy_function,
                 signal_args=strategy_params
+            )
+            
+            # USAR O NOVO MÓDULO DE MÉTRICAS
+            metrics = calculate_comprehensive_metrics(
+                df=df,
+                initial_cash=self.initial_cash,
+                risk_free_rate=0.0  # Pode ser parametrizado se necessário
             )
             
             # Obter o valor da métrica selecionada
@@ -334,8 +336,6 @@ class StrategyOptimizer:
                 else:
                     # Para outras métricas que queremos minimizar, invertemos o sinal
                     metric_value = -metric_value
-            
-            #print(f"Trial {trial.number} concluído: {self.optimize_metric} = {metric_value:.4f}")
             
             # Adicionar métricas adicionais para o Optuna armazenar
             trial.set_user_attr('sortino_ratio', metrics['sortino_ratio'])
@@ -391,9 +391,7 @@ class StrategyOptimizer:
                 study_name=study_name
             )
             
-            #print(f"Iniciando otimização com {self.num_trials} trials para hora {hour}...")
             study.optimize(objective, n_trials=self.num_trials)
-            #print(f"Otimização concluída para hora {hour}.")
             
             # Extrair o melhor valor
             best_value = study.best_value
@@ -540,9 +538,16 @@ class StrategyOptimizer:
             signal_args['allowed_hours'] = [hour]
             
             # Executar backtest com os melhores parâmetros
-            df, metrics = bt.run(
+            df, _ = bt.run(
                 signal_function=self.strategy_function,
                 signal_args=signal_args
+            )
+            
+            # USAR O NOVO MÓDULO DE MÉTRICAS
+            metrics = calculate_comprehensive_metrics(
+                df=df,
+                initial_cash=self.initial_cash,
+                risk_free_rate=0.0
             )
             
             # Salvar gráfico de equity para essa hora
@@ -554,20 +559,22 @@ class StrategyOptimizer:
             plt.close()
             
             # Adicionar resultados da validação
+            validation_metrics = {
+                'sortino_ratio': metrics['sortino_ratio'],
+                'sharpe_ratio': metrics['sharpe_ratio'],
+                'calmar_ratio': metrics['calmar_ratio'],
+                'profit_factor': metrics['profit_factor'],
+                'win_rate': metrics['win_rate'],
+                'max_drawdown': metrics['max_drawdown'],
+                'total_return': metrics['total_return'],
+                'total_trades': metrics['total_trades'],
+                'annual_return': metrics['annual_return']
+            }
+            
             self.validation_results.append({
                 'hour': hour,
                 'params': params,
-                'metrics': {
-                    'sortino_ratio': metrics['sortino_ratio'],
-                    'sharpe_ratio': metrics['sharpe_ratio'],
-                    'calmar_ratio': metrics['calmar_ratio'],
-                    'profit_factor': metrics['profit_factor'],
-                    'win_rate': metrics['win_rate'],
-                    'max_drawdown': metrics['max_drawdown'],
-                    'total_return': metrics['total_return'],
-                    'total_trades': metrics['total_trades'],
-                    'annual_return': metrics['annual_return']
-                }
+                'metrics': validation_metrics
             })
         
         # Salvar resultados da validação
@@ -706,7 +713,7 @@ class StrategyOptimizer:
             signal_args['allowed_hours'] = [hour]
             
             # Executar backtest para esta hora específica
-            df_hour, metrics_hour = bt_hour.run(
+            df_hour, _ = bt_hour.run(
                 signal_function=self.strategy_function,
                 signal_args=signal_args
             )
@@ -714,7 +721,6 @@ class StrategyOptimizer:
             # Armazenar resultados desta hora
             hour_results[hour] = {
                 'df': df_hour,
-                'metrics': metrics_hour,
                 'tp': tp,
                 'sl': sl
             }
@@ -771,8 +777,12 @@ class StrategyOptimizer:
         df_combined['underwater'] = dd_df['underwater']
         df_combined['time_uw'] = dd_df['time_uw']
         
-        # Calcular métricas usando a mesma lógica do backtester
-        metrics_combined = self._calculate_combined_metrics(df_combined)
+        # USAR O NOVO MÓDULO DE MÉTRICAS
+        metrics_combined = calculate_comprehensive_metrics(
+            df=df_combined,
+            initial_cash=self.initial_cash,
+            risk_free_rate=0.0
+        )
         
         # Salvar gráficos
         self._save_combined_plots(df_combined)
@@ -780,168 +790,20 @@ class StrategyOptimizer:
         # Salvar métricas da estratégia combinada
         save_json(metrics_combined, os.path.join(self.run_dir, "combined_metrics.json"))
         
-        # Imprimir métricas principais
-        print("\n===== RESULTADOS DA ESTRATÉGIA COMBINADA =====")
-        print(f"Retorno Total: ${metrics_combined['total_return']:.2f} ({metrics_combined['total_return_pct']:.2f}%)")
-        print(f"Retorno Anualizado: {metrics_combined['annual_return']:.2f}%")
-        print(f"Drawdown Máximo: {metrics_combined['max_drawdown']:.2%}")
-        print(f"Trades Totais: {metrics_combined['total_trades']}")
-        print(f"Win Rate: {metrics_combined['win_rate']:.2%}")
-        print(f"Profit Factor: {metrics_combined['profit_factor']:.4f}")
-        print(f"Sharpe Ratio: {metrics_combined['sharpe_ratio']:.4f}")
-        print(f"Sortino Ratio: {metrics_combined['sortino_ratio']:.4f}")
-        print(f"Calmar Ratio: {metrics_combined['calmar_ratio']:.4f}")
+        # Imprimir métricas principais usando o formatador
+        print("\n" + format_metrics_report(
+            metrics=metrics_combined,
+            symbol=self.symbol,
+            timeframe=self.timeframe,
+            period=f"{self.data_ini} a {self.data_fim}"
+        ))
+        
         print(f"Métrica otimizada ({self.optimize_metric}): {metrics_combined[self.optimize_metric]:.4f}")
         
         # Análise por hora da estratégia combinada
         self._analyze_combined_by_hour(df_combined)
         
         return df_combined, metrics_combined
-    
-    def _calculate_combined_metrics(self, df, risk_free_rate=0.0):
-        """
-        Calcula métricas para a estratégia combinada usando a mesma lógica do backtester.
-        
-        Args:
-            df (pandas.DataFrame): DataFrame com os resultados combinados
-            
-        Returns:
-            dict: Dicionário com as métricas calculadas
-        """
-        # Resultados básicos
-        initial_equity = self.initial_cash
-        final_equity = df['equity'].iloc[-1]
-        total_return = final_equity - initial_equity
-        total_return_pct = (final_equity / initial_equity - 1) * 100
-
-        # Métricas avançadas de drawdown (código existente mantido)
-        max_drawdown = abs(df['drawdown_pct'].min()) if len(df) > 0 else 0
-        max_drawdown_value = abs(df['drawdown'].min()) if len(df) > 0 else 0
-        max_time_underwater = df['time_uw'].max() if len(df) > 0 else 0
-        
-        total_periods = len(df)
-        underwater_periods = df['underwater'].sum()
-        underwater_rate = underwater_periods / total_periods if total_periods > 0 else 0
-
-        # Análise de trades (código existente mantido)
-        df['trade_start'] = df['position'].diff().ne(0) & (df['position'] != 0)
-        total_trades = df['trade_start'].sum()
-        
-        if total_trades > 0:
-            win_trades = (df[df['trade_start']]['strategy'] > 0).sum()
-            loss_trades = (df[df['trade_start']]['strategy'] < 0).sum()
-            win_rate = win_trades / total_trades if total_trades > 0 else 0
-
-            # Análise de razão de saídas (código existente mantido)
-            tp_hits = (df[df['trade_start']]['status_trade'] == 1).sum()
-            sl_hits = (df[df['trade_start']]['status_trade'] == -1).sum()
-            time_exits = (df[df['trade_start']]['status_trade'] == 0).sum()
-
-            tp_rate = tp_hits / total_trades if total_trades > 0 else 0
-            sl_rate = sl_hits / total_trades if total_trades > 0 else 0
-            time_exit_rate = time_exits / total_trades if total_trades > 0 else 0
-
-            # Profit factor (código existente mantido)
-            gross_profits = df.loc[df['strategy'] > 0, 'strategy'].sum()
-            gross_losses = abs(df.loc[df['strategy'] < 0, 'strategy'].sum())
-            profit_factor = gross_profits / gross_losses if gross_losses != 0 else float('inf')
-
-            # ======= CÁLCULO DE MÉTRICAS DE RISCO =======
-            
-            # 1. CALCULAR RETORNOS DIÁRIOS CORRETAMENTE
-            # Retornos baseados na mudança percentual da equity
-            df['equity_returns'] = df['equity'].pct_change().fillna(0)
-            
-            # Agregar retornos por dia (composição correta para múltiplas operações no mesmo dia)
-            daily_returns = df['equity_returns'].resample('D').apply(
-                lambda x: (1 + x).prod() - 1 if len(x) > 0 else 0
-            )
-            
-            # Filtrar apenas dias com dados reais (remover zeros)
-            daily_returns_filtered = daily_returns[daily_returns != 0]
-            
-            # 2. CALCULAR MÉTRICAS ANUALIZADAS
-            trading_days = len(daily_returns_filtered)
-            years = trading_days / 252  # 252 dias úteis por ano
-            
-            if years > 0 and len(daily_returns_filtered) > 0:
-                # Retorno anualizado usando composição
-                total_return_decimal = (final_equity / initial_equity) - 1
-                annual_return = (1 + total_return_decimal) ** (1/years) - 1  # Em decimal
-                
-                # Volatilidade anualizada
-                annual_volatility = daily_returns_filtered.std() * np.sqrt(252)  # Em decimal
-                
-                # 3. SHARPE RATIO
-                sharpe_ratio = (annual_return - risk_free_rate) / annual_volatility if annual_volatility != 0 else 0
-                
-                # 4. SORTINO RATIO
-                downside_returns = daily_returns_filtered[daily_returns_filtered < 0]
-                if len(downside_returns) > 0:
-                    downside_volatility = downside_returns.std() * np.sqrt(252)
-                    sortino_ratio = (annual_return - risk_free_rate) / downside_volatility if downside_volatility != 0 else 0
-                else:
-                    sortino_ratio = 0
-                
-                # 5. CALMAR RATIO
-                calmar_ratio = annual_return / max_drawdown if max_drawdown != 0 else 0
-                
-                # Converter para percentual apenas para exibição
-                annual_return_pct = annual_return * 100
-                annual_volatility_pct = annual_volatility * 100
-                
-            else:
-                annual_return = annual_return_pct = 0
-                annual_volatility = annual_volatility_pct = 0
-                sharpe_ratio = sortino_ratio = calmar_ratio = 0
-
-            # Média de ganhos e perdas (código existente mantido)
-            avg_win = gross_profits / win_trades if win_trades > 0 else 0
-            avg_loss = gross_losses / loss_trades if loss_trades > 0 else 0
-            win_loss_ratio = avg_win / abs(avg_loss) if loss_trades > 0 else float('inf')
-
-            # Expectativa matemática (código existente mantido)
-            expectancy = (win_rate * avg_win - (1 - win_rate) * avg_loss) if (win_trades > 0 and loss_trades > 0) else 0
-
-        else:
-            # Valores padrão se não houver trades
-            win_rate = 0
-            tp_rate = sl_rate = time_exit_rate = 0
-            profit_factor = 0
-            annual_return = annual_return_pct = 0
-            annual_volatility = annual_volatility_pct = 0
-            sharpe_ratio = sortino_ratio = calmar_ratio = 0
-            avg_win = avg_loss = win_loss_ratio = expectancy = 0
-            win_trades = loss_trades = 0
-
-        return {
-            'initial_cash': initial_equity,
-            'final_equity': final_equity,
-            'total_return': total_return,
-            'total_return_pct': total_return_pct,
-            'annual_return': annual_return_pct,  # Retorna em % para compatibilidade
-            'annual_volatility': annual_volatility_pct,  # Retorna em % para compatibilidade
-            'total_trades': total_trades,
-            'win_trades': win_trades,
-            'loss_trades': loss_trades,
-            'win_rate': win_rate,
-            'tp_rate': tp_rate,
-            'sl_rate': sl_rate,
-            'time_exit_rate': time_exit_rate,
-            'profit_factor': profit_factor,
-            'max_drawdown': max_drawdown,
-            'max_drawdown_value': max_drawdown_value,
-            'max_time_underwater': max_time_underwater,
-            'underwater_rate': underwater_rate,
-            'sharpe_ratio': sharpe_ratio,  # Agora calculado corretamente
-            'sortino_ratio': sortino_ratio,  # Agora calculado corretamente
-            'calmar_ratio': calmar_ratio,  # Agora calculado corretamente
-            'avg_win': avg_win,
-            'avg_loss': avg_loss,
-            'win_loss_ratio': win_loss_ratio,
-            'expectancy': expectancy,
-            'risk_free_rate': risk_free_rate  # Para referência
-        }
     
     def _save_combined_plots(self, df):
         """Salva gráficos da estratégia combinada."""
