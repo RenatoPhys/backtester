@@ -326,7 +326,11 @@ class StrategyOptimizer:
             )
             
             # Obter o valor da métrica selecionada
-            metric_value = metrics.get(self.optimize_metric, 0)
+            if metrics['total_trades'] > 1000: # filtro de número de trades
+                metric_value = metrics.get(self.optimize_metric, 0)
+            else:
+                metric_value = float('-inf') if self.direction == 'maximize' else float('inf')
+            
             
             # Ajuste para métricas que normalmente são minimizadas, quando a direção é 'minimize'
             if self.direction == 'minimize':
