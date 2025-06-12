@@ -171,7 +171,7 @@ class StrategyOptimizer:
         
         # Criar diretório específico para essa execução com timestamp
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        run_dir = os.path.join(self.export_dir, f"run_{self.symbol}_{self.timeframe}_{timestamp}")
+        run_dir = os.path.join(self.export_dir, f"run_{self.symbol}_{(self.strategy_function).__name__}_{self.timeframe}_{timestamp}")
         os.makedirs(run_dir)
         
         # Armazenar diretório da execução
@@ -293,8 +293,8 @@ class StrategyOptimizer:
                     strategy_params[k] = v
             
             # Print para debug - use {:.5f} para formatar os valores com 5 casas decimais
-            print(f"Trial {trial.number} para hora {hour}: Testando estratégia com parâmetros {strategy_params}")
-            print(f"Trial {trial.number} para hora {hour}: Usando backtester com TP={tp:.5f}, SL={sl:.5f}")            
+            #print(f"Trial {trial.number} para hora {hour}: Testando estratégia com parâmetros {strategy_params}")
+            #print(f"Trial {trial.number} para hora {hour}: Usando backtester com TP={tp:.5f}, SL={sl:.5f}")            
         
             # Adicionar allowed_hours à estratégia
             strategy_params['allowed_hours'] = [hour]
@@ -317,7 +317,7 @@ class StrategyOptimizer:
             )
             
             # Executar backtest focando apenas na hora específica
-            print(f"Executando backtest para trial {trial.number}, hora {hour}...")
+            #print(f"Executando backtest para trial {trial.number}, hora {hour}...")
             _, metrics = bt.run(
                 signal_function=self.strategy_function,
                 signal_args=strategy_params
@@ -335,7 +335,7 @@ class StrategyOptimizer:
                     # Para outras métricas que queremos minimizar, invertemos o sinal
                     metric_value = -metric_value
             
-            print(f"Trial {trial.number} concluído: {self.optimize_metric} = {metric_value:.4f}")
+            #print(f"Trial {trial.number} concluído: {self.optimize_metric} = {metric_value:.4f}")
             
             # Adicionar métricas adicionais para o Optuna armazenar
             trial.set_user_attr('sortino_ratio', metrics['sortino_ratio'])
@@ -391,9 +391,9 @@ class StrategyOptimizer:
                 study_name=study_name
             )
             
-            print(f"Iniciando otimização com {self.num_trials} trials para hora {hour}...")
+            #print(f"Iniciando otimização com {self.num_trials} trials para hora {hour}...")
             study.optimize(objective, n_trials=self.num_trials)
-            print(f"Otimização concluída para hora {hour}.")
+            #print(f"Otimização concluída para hora {hour}.")
             
             # Extrair o melhor valor
             best_value = study.best_value
