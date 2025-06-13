@@ -636,6 +636,7 @@ class StrategyOptimizer:
             'hours': good_hours,
             'hour_params': good_params,
             'tc': self.tc,
+            'lote': self.lote,
             'valor_lote': self.valor_lote,
             'optimize_metric': self.optimize_metric,
             'direction': self.direction

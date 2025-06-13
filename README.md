@@ -496,13 +496,6 @@ Este projeto está licenciado sob a Licença MIT - veja o arquivo [LICENSE](LICE
 
 - **Seu Nome** - *Desenvolvimento inicial* - [GitHub](https://github.com/seu_usuario)
 
-## 🙏 Agradecimentos
-
-- Comunidade Python Quant
-- Contribuidores do NumPy, Pandas e Matplotlib
-- Desenvolvedores do Numba pela performance incrível
-- Time do Optuna pela biblioteca de otimização
-
 ## 📞 Suporte
 
 - 📧 Email: renato.critelli.ifusp@gmail.com
