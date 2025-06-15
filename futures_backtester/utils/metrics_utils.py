@@ -116,10 +116,10 @@ def calculate_trade_metrics(df, strategy_col='strategy', position_col='position'
     # Médias de ganhos e perdas
     avg_win = gross_profits / win_trades if win_trades > 0 else 0
     avg_loss = gross_losses / loss_trades if loss_trades > 0 else 0
-    win_loss_ratio = avg_win / abs(avg_loss) if loss_trades > 0 else float('inf')
+    win_loss_ratio = avg_win / avg_loss if avg_loss > 0 else float('inf')
     
     # Expectância
-    expectancy = (win_rate * avg_win - (1 - win_rate) * avg_loss) if (win_trades > 0 and loss_trades > 0) else 0
+    expectancy = (win_rate * avg_win) - ((1 - win_rate) * avg_loss)
     
     return {
         'total_trades': total_trades,
@@ -165,10 +165,16 @@ def calculate_risk_metrics(equity_series, initial_cash, risk_free_rate=0.0):
     years = trading_days / 252  # 252 dias úteis por ano
     
     if years > 0 and len(daily_returns_filtered) > 0:
-        # Retorno anualizado
+        # Retorno anualizado - CORREÇÃO: lidar com retornos negativos
         final_equity = equity_series.iloc[-1]
         total_return_decimal = (final_equity / initial_cash) - 1
-        annual_return = (1 + total_return_decimal) ** (1/years) - 1
+        
+        # Verificar se o retorno total é negativo
+        if total_return_decimal < 0:
+            # Para retornos negativos, usar fórmula diferente
+            annual_return = -((1 + abs(total_return_decimal)) ** (1/years) - 1)
+        else:
+            annual_return = (1 + total_return_decimal) ** (1/years) - 1
         
         # Volatilidade anualizada
         annual_volatility = daily_returns_filtered.std() * np.sqrt(252)
@@ -184,11 +190,16 @@ def calculate_risk_metrics(equity_series, initial_cash, risk_free_rate=0.0):
         else:
             sortino_ratio = 0
         
-        # Calmar Ratio
+        # Calmar Ratio - CORREÇÃO: lidar com retornos negativos
         from .drawdown_utils import calc_dd
         dd_df = calc_dd(equity_series)
         max_drawdown = abs(dd_df['drawdown_pct'].min()) if len(dd_df) > 0 else 0
-        calmar_ratio = annual_return / max_drawdown if max_drawdown != 0 else 0
+        
+        # Se o retorno anual é negativo, o Calmar ratio também deve ser negativo
+        if max_drawdown != 0:
+            calmar_ratio = annual_return / max_drawdown
+        else:
+            calmar_ratio = 0
         
         # Converter para percentual para compatibilidade
         annual_return_pct = annual_return * 100
@@ -306,14 +317,25 @@ def format_metrics_report(metrics, symbol=None, timeframe=None, period=None):
     report.append(f"Sharpe Ratio: {metrics['sharpe_ratio']:.3f}")
     report.append(f"Sortino Ratio: {metrics['sortino_ratio']:.3f}")
     report.append(f"Calmar Ratio: {metrics['calmar_ratio']:.3f}")
-    report.append(f"Profit Factor: {metrics['profit_factor']:.3f}")
+    
+    # Formatação especial para Profit Factor
+    if metrics['profit_factor'] == float('inf'):
+        report.append(f"Profit Factor: ∞ (sem perdas)")
+    else:
+        report.append(f"Profit Factor: {metrics['profit_factor']:.3f}")
     report.append("")
     
     # Análise de ganhos/perdas
     report.append("--- ANÁLISE DE GANHOS/PERDAS ---")
     report.append(f"Ganho Médio: ${metrics['avg_win']:.2f}")
     report.append(f"Perda Média: ${metrics['avg_loss']:.2f}")
-    report.append(f"Win/Loss Ratio: {metrics['win_loss_ratio']:.2f}")
+    
+    # Formatação especial para Win/Loss Ratio
+    if metrics['win_loss_ratio'] == float('inf'):
+        report.append(f"Win/Loss Ratio: ∞ (sem perdas)")
+    else:
+        report.append(f"Win/Loss Ratio: {metrics['win_loss_ratio']:.2f}")
+    
     report.append(f"Expectancy: ${metrics['expectancy']:.2f}")
     
     report.append("=" * 50)
