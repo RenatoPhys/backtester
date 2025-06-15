@@ -638,6 +638,7 @@ class StrategyOptimizer:
             'tc': self.tc,
             'lote': self.lote,
             'valor_lote': self.valor_lote,
+            'daytrade': self.daytrade,
             'optimize_metric': self.optimize_metric,
             'direction': self.direction
         }
