@@ -21,6 +21,7 @@ from functools import partial
 from concurrent.futures import ProcessPoolExecutor
 from .backtester import Backtester
 from .utils.metrics_utils import calculate_comprehensive_metrics, format_metrics_report
+import random
 
 
 # Adicione estas definições no nível global do arquivo
@@ -639,6 +640,7 @@ class StrategyOptimizer:
             'lote': self.lote,
             'valor_lote': self.valor_lote,
             'daytrade': self.daytrade,
+            'magic_number': random.randint(0, 99999),
             'optimize_metric': self.optimize_metric,
             'direction': self.direction
         }
