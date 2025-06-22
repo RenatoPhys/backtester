@@ -1,6 +1,6 @@
 
 """
-Forex Backtester - Framework para backtesting de estratégias sistemáticas em FOREX.
+Futures Backtester - Framework para backtesting de estratégias sistemáticas.
 """
 
 __version__ = "0.1.0"
