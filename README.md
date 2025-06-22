@@ -494,7 +494,7 @@ Este projeto está licenciado sob a Licença MIT - veja o arquivo [LICENSE](LICE
 
 ## 👥 Autores
 
-- **Seu Nome** - *Desenvolvimento inicial* - [GitHub](https://github.com/seu_usuario)
+- **Renato Critelli** - *Desenvolvimento inicial* - [GitHub](https://github.com/renatophys)
 
 ## 📞 Suporte
 
